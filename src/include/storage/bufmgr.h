@@ -262,7 +262,7 @@ extern void FreeAccessStrategy(BufferAccessStrategy strategy);
  * exclude a page from old snapshot testing near the front.
  */
 static inline void
-TestForOldSnapshot(Snapshot snapshot, Relation relation, Page page)
+TestForOldSnapshot(Snapshot snapshot, Relation relation, Buffer buf)
 {
 	Assert(relation != NULL);
 
@@ -271,7 +271,7 @@ TestForOldSnapshot(Snapshot snapshot, Relation relation, Page page)
 		&& ((snapshot)->satisfies == HeapTupleSatisfiesMVCC
 			|| (snapshot)->satisfies == HeapTupleSatisfiesToast)
 		&& !XLogRecPtrIsInvalid((snapshot)->lsn)
-		&& PageGetLSN(page) > (snapshot)->lsn)
+		&& BufferGetLSNAtomic(buf) > (snapshot)->lsn)
 		TestForOldSnapshot_impl(snapshot, relation);
 }
 

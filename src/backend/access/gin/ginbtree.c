@@ -92,7 +92,7 @@ ginFindLeafPage(GinBtree btree, bool searchMode, Snapshot snapshot)
 		stack->off = InvalidOffsetNumber;
 
 		page = BufferGetPage(stack->buffer);
-		TestForOldSnapshot(snapshot, btree->index, page);
+		TestForOldSnapshot(snapshot, btree->index, stack->buffer);
 
 		access = ginTraverseLock(stack->buffer, searchMode);
 
@@ -119,7 +119,7 @@ ginFindLeafPage(GinBtree btree, bool searchMode, Snapshot snapshot)
 			stack->buffer = ginStepRight(stack->buffer, btree->index, access);
 			stack->blkno = rightlink;
 			page = BufferGetPage(stack->buffer);
-			TestForOldSnapshot(snapshot, btree->index, page);
+			TestForOldSnapshot(snapshot, btree->index, stack->buffer);
 
 			if (!searchMode && GinPageIsIncompleteSplit(page))
 				ginFinishSplit(btree, stack, false, NULL);

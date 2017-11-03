@@ -79,7 +79,7 @@ brinRevmapInitialize(Relation idxrel, BlockNumber *pagesPerRange,
 	meta = ReadBuffer(idxrel, BRIN_METAPAGE_BLKNO);
 	LockBuffer(meta, BUFFER_LOCK_SHARE);
 	page = BufferGetPage(meta);
-	TestForOldSnapshot(snapshot, idxrel, page);
+	TestForOldSnapshot(snapshot, idxrel, meta);
 	metadata = (BrinMetaPageData *) PageGetContents(page);
 
 	revmap = palloc(sizeof(BrinRevmap));
@@ -277,7 +277,7 @@ brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
 		}
 		LockBuffer(*buf, mode);
 		page = BufferGetPage(*buf);
-		TestForOldSnapshot(snapshot, idxRel, page);
+		TestForOldSnapshot(snapshot, idxRel, *buf);
 
 		/* If we land on a revmap page, start over */
 		if (BRIN_IS_REGULAR_PAGE(page))
