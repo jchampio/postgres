@@ -4374,9 +4374,19 @@ AssertPageIsLockedForLSN(Page page)
 		LWLock *content_lock = BufferDescriptorGetContentLock(buf);
 		uint32 buf_state = pg_atomic_read_u32(&buf->state);
 
+		/*
+		 * Either:
+		 * 1) we hold the exclusive lock for the buffer contents, so reading is
+		 *    always safe, or
+		 * 2) we hold the shared lock and the header spinlock, in which case we
+		 *    are protected against other exclusive lock holders and other WAL
+		 *    log hint writers, or
+		 * 3) XLog hint bits aren't enabled (so there are no WAL log hint
+		 *    writers) and we just need the shared lock by itself.
+		 */
 		Assert(LWLockHeldByMeInMode(content_lock, LW_EXCLUSIVE)
 			   || (LWLockHeldByMeInMode(content_lock, LW_SHARED)
-				   && (buf_state & BM_LOCKED)));
+				   && (!XLogHintBitIsNeeded() || (buf_state & BM_LOCKED))));
 	}
 }
 #endif
