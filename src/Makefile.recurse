@@ -1,0 +1,1 @@
+$(foreach subdir,$(sort $(subdirs_to_include)),$(eval $(call _include_recursive,$(subdir))))

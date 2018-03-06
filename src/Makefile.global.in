@@ -14,6 +14,10 @@
 # parent directory of the directory this file is in.)
 #------------------------------------------------------------------------------
 
+# Only allow this file to be included once, the first time. This prevents
+# redefinition during recursive includes.
+ifeq ($(__makefile_global_included),)
+__makefile_global_included = yes
 
 ##########################################################################
 #
@@ -754,6 +758,25 @@ ifndef .VARIABLES
 $(error GNU make 3.80 or newer is required.  You are using version $(MAKE_VERSION))
 endif
 
+# As each Makefile is recursively included, the cursubdir variable is changed to
+# the directory in which that Makefile resides.
+cursubdir := .
+
+# The current list of recursive SUBDIRS from which we should include Makefiles.
+# This list is added to by recurse and recurse_always, below. It is reset before
+# the next Makefile is included.
+subdirs_to_include :=
+
+dash-subdir = $(subst /,-,$(1))
+
+# $(call global_target_name,$(target),$(subdirectory))
+#
+# If the subdirectory is equal to "." (indicating we're at the top level), the
+# value of target is returned; otherwise a string of the form
+# target-subdirectory-recurse is returned.
+global_target_name = $(if $(filter-out .,$(2)),$(1)-$(call dash-subdir,$(2))-recurse,$(1))
+subdir_target_name = $(call global_target_name,$(1),$(if $(filter-out .,$(cursubdir)),$(cursubdir)/)$(2))
+
 # This function is only for internal use below.  It should be called
 # using $(eval).  It will set up a target so that it recurses into
 # a given subdirectory.  Note that to avoid a nasty bug in make 3.80,
@@ -765,14 +788,28 @@ endif
 # $2: subdir name
 # $3: target to run in subdir, usually same as $1
 define _create_recursive_target
-.PHONY: $(1)-$(2)-recurse
-$(1): $(1)-$(2)-recurse
-$(1)-$(2)-recurse: $(if $(filter check, $(3)), temp-install)
-	$$(MAKE) -C $(2) $(3)
+.PHONY: $(call subdir_target_name,$(3),$(2))
+$(call global_target_name,$(1),$(cursubdir)): $(call subdir_target_name,$(3),$(2))
+#$(call subdir_target_name,$(3),$(2)): $(if $(filter check, $(3)), temp-install)
+subdirs_to_include += $(2)
 endef
 # Note that the use of $$ on the last line above is important; we want
 # $(MAKE) to be evaluated when the rule is run, not when the $(eval) is run
 # to create the rule.  This is necessary to get make -q working.
+
+# This function is only for internal use in Makefile.recurse.  It's meant to be
+# called with $(eval) on each subdirectory in $(subdirs_to_include). It takes
+# care of pushing and popping cursubdir values for every Makefile.
+define _include_recursive
+SUBDIRS :=
+ALWAYS_SUBDIRS :=
+subdirs_to_include :=
+
+$(cursubdir)_cursubdir := $(cursubdir)
+cursubdir := $(if $(filter-out .,$(cursubdir)),$(cursubdir)/)$(1)
+include $$(cursubdir)/Makefile
+cursubdir := $$($(cursubdir)_cursubdir)
+endef
 
 # Call this function in a makefile that needs to recurse into subdirectories.
 # In the normal case all arguments can be defaulted.
@@ -928,3 +965,5 @@ coverage-clean:
 	rm -f `find . -name '*.gcda' -print`
 
 endif # enable_coverage
+
+endif # __makefile_global_included

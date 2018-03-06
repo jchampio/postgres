@@ -128,3 +128,5 @@ distcheck: dist
 	@echo "Distribution integrity checks out."
 
 .PHONY: dist distdir distcheck docs install-docs world check-world install-world installcheck-world
+
+include $(top_builddir)/src/Makefile.recurse
