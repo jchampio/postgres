@@ -1,7 +1,7 @@
 # config/Makefile
 
 subdir = config
-top_builddir = ..
+top_builddir ?= ..
 include $(top_builddir)/src/Makefile.global
 
 

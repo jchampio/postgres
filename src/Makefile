@@ -9,8 +9,8 @@
 #-------------------------------------------------------------------------
 
 subdir = src
-top_builddir = ..
-include Makefile.global
+top_builddir ?= ..
+include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = \
 	common \

@@ -1,5 +1,5 @@
 subdir = src/interfaces/ecpg
-top_builddir = ../../..
+top_builddir ?= ../../..
 include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = include pgtypeslib ecpglib compatlib preproc
