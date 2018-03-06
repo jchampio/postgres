@@ -19,6 +19,15 @@
 ifeq ($(__makefile_global_included),)
 __makefile_global_included = yes
 
+# This little bit of magic ensures that we always have the full Makefile tree at
+# our disposal when building. If you invoke Make from a subdirectory, this
+# recipe will build that piece of the tree from the top level, ensuring that
+# dependencies in other directories are taken care of as well.
+ifneq ($(top_builddir),.)
+all .DEFAULT:
+	$(MAKE) -C $(top_builddir) $(subdir)/$@
+
+else
 ##########################################################################
 #
 # Meta configuration
@@ -964,4 +973,5 @@ coverage-clean:
 
 endif # enable_coverage
 
+endif # top_builddir == "."
 endif # __makefile_global_included
