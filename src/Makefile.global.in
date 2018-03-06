@@ -767,14 +767,12 @@ cursubdir := .
 # the next Makefile is included.
 subdirs_to_include :=
 
-dash-subdir = $(subst /,-,$(1))
-
 # $(call global_target_name,$(target),$(subdirectory))
 #
 # If the subdirectory is equal to "." (indicating we're at the top level), the
 # value of target is returned; otherwise a string of the form
 # target-subdirectory-recurse is returned.
-global_target_name = $(if $(filter-out .,$(2)),$(1)-$(call dash-subdir,$(2))-recurse,$(1))
+global_target_name = $(if $(filter-out .,$(2)),$(2)/)$(1)
 subdir_target_name = $(call global_target_name,$(1),$(if $(filter-out .,$(cursubdir)),$(cursubdir)/)$(2))
 
 # This function is only for internal use below.  It should be called
