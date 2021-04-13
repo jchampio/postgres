@@ -153,6 +153,7 @@ ArrayMetaState
 ArraySubWorkspace
 ArrayToken
 ArrayType
+AsyncAuthFunc
 AsyncQueueControl
 AsyncQueueEntry
 AsyncRequest
@@ -368,6 +369,8 @@ CState
 CTECycleClause
 CTEMaterialize
 CTESearchClause
+CURL
+CURLM
 CV
 CachedExpression
 CachedPlan
@@ -1714,6 +1717,7 @@ NumericDigit
 NumericSortSupport
 NumericSumAccum
 NumericVar
+OAuthStep
 OM_uint32
 OP
 OSAPerGroupState
@@ -1778,6 +1782,7 @@ PFN
 PGAlignedBlock
 PGAlignedXLogBlock
 PGAsyncStatusType
+PGAuthData
 PGCALL2
 PGChecksummablePage
 PGContextVisibility
@@ -1938,11 +1943,14 @@ PQArgBlock
 PQEnvironmentOption
 PQExpBuffer
 PQExpBufferData
+PQauthDataHook_type
 PQcommMethods
 PQconninfoOption
 PQnoticeProcessor
 PQnoticeReceiver
+PQoauthBearerRequest
 PQprintOpt
+PQpromptOAuthDevice
 PQsslKeyPassHook_OpenSSL_type
 PREDICATELOCK
 PREDICATELOCKTAG
@@ -3451,6 +3459,8 @@ explain_get_index_name_hook_type
 f_smgr
 fasthash_state
 fd_set
+fe_oauth_state
+fe_oauth_state_enum
 fe_scram_state
 fe_scram_state_enum
 fetch_range_request
