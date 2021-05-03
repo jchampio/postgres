@@ -19,6 +19,9 @@ include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
 
+# TODO: fix this properly
+LDFLAGS_INTERNAL += -lpgcommon $(libpq_pgport)
+
 all: test_json_parser_incremental$(X) test_json_parser_perf$(X)
 
 %.o: $(top_srcdir)/$(subdir)/%.c

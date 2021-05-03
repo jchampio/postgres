@@ -139,7 +139,8 @@ json_parse_manifest_incremental_init(JsonManifestParseContext *context)
 	parse->state = JM_EXPECT_TOPLEVEL_START;
 	parse->saw_version_field = false;
 
-	makeJsonLexContextIncremental(&(incstate->lex), PG_UTF8, true);
+	if (!makeJsonLexContextIncremental(&(incstate->lex), PG_UTF8, true))
+		context->error_cb(context, "out of memory");
 
 	incstate->sem.semstate = parse;
 	incstate->sem.object_start = json_manifest_object_start;
@@ -240,6 +241,8 @@ json_parse_manifest(JsonManifestParseContext *context, const char *buffer,
 
 	/* Create a JSON lexing context. */
 	lex = makeJsonLexContextCstringLen(NULL, buffer, size, PG_UTF8, true);
+	if (!lex)
+		json_manifest_parse_failure(context, "out of memory");
 
 	/* Set up semantic actions. */
 	sem.semstate = &parse;
