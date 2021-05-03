@@ -13,7 +13,7 @@ endif
 
 test_json_parser_incremental = executable('test_json_parser_incremental',
   test_json_parser_incremental_sources,
-  dependencies: [frontend_code],
+  dependencies: [frontend_code, libpq],
   kwargs: default_bin_args + {
     'install': false,
   },
@@ -32,7 +32,7 @@ endif
 
 test_json_parser_perf = executable('test_json_parser_perf',
   test_json_parser_perf_sources,
-  dependencies: [frontend_code],
+  dependencies: [frontend_code, libpq],
   kwargs: default_bin_args + {
     'install': false,
   },
