@@ -476,6 +476,7 @@ generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen)
 	initStringInfo(&buf);
 
 	/*
+	 * TODO
 	 * Escaping the string here is belt-and-suspenders defensive programming
 	 * since escapable characters aren't valid in either the issuer URI or the
 	 * scope list, but the HBA doesn't enforce that yet.
@@ -533,7 +534,7 @@ validate_token_format(const char *header)
 	if (!header || strlen(header) <= 7)
 	{
 		ereport(COMMERROR,
-				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errcode(ERRCODE_PROTOCOL_VIOLATION), /* TODO */
 				errmsg("malformed OAuth bearer token"),
 				errdetail_log("Bearer token is less than 8 bytes."));
 		return NULL;
@@ -552,7 +553,7 @@ validate_token_format(const char *header)
 	/* Tokens must not be empty. */
 	if (!*token)
 	{
-		ereport(COMMERROR,
+		ereport(COMMERROR, /* TODO test */
 				errcode(ERRCODE_PROTOCOL_VIOLATION),
 				errmsg("malformed OAuth bearer token"),
 				errdetail_log("Bearer token is empty."));
@@ -574,7 +575,7 @@ validate_token_format(const char *header)
 		 * problematic character(s), but that'd be a bit like printing a piece
 		 * of someone's password into the logs.
 		 */
-		ereport(COMMERROR,
+		ereport(COMMERROR, /* TODO test */
 				errcode(ERRCODE_PROTOCOL_VIOLATION),
 				errmsg("malformed OAuth bearer token"),
 				errdetail_log("Bearer token is not in the correct format."));
@@ -619,6 +620,7 @@ validate(Port *port, const char *auth)
 	/* Make sure the validator authenticated the user. */
 	if (ret->authn_id == NULL || ret->authn_id[0] == '\0')
 	{
+		/* TODO: test logdetail; reduce message duplication elsewhere */
 		ereport(LOG,
 				errmsg("OAuth bearer authentication failed for user \"%s\"",
 					   port->user_name),

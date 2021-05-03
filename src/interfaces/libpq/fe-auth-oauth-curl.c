@@ -685,6 +685,7 @@ parse_oauth_json(struct async_ctx *actx, const struct json_field *fields)
 		return false;
 	}
 
+	/* TODO return value not possible */
 	if (!makeJsonLexContextCstringLen(&lex, resp->data, resp->len, PG_UTF8, true))
 	{
 		actx_error(actx, "out of memory");
@@ -850,7 +851,7 @@ parse_device_authz(struct async_ctx *actx, struct device_authz *authz)
 	else
 	{
 		/*
-		 * RFC 8628 specify 5 seconds as the default value if the server
+		 * RFC 8628 specifies 5 seconds as the default value if the server
 		 * doesn't provide an interval.
 		 */
 		authz->interval = 5;
@@ -1367,7 +1368,8 @@ append_data(char *buf, size_t size, size_t nmemb, void *userdata)
 	PQExpBuffer resp = userdata;
 	size_t		len = size * nmemb;
 
-	/* In case we receive data over the threshold, abort the transfer */
+	/* In case we receive data over the threshold, abort the transfer
+	 * TODO test */
 	if ((resp->len + len) > MAX_OAUTH_RESPONSE_SIZE)
 		return 0;
 
@@ -1377,6 +1379,7 @@ append_data(char *buf, size_t size, size_t nmemb, void *userdata)
 	/*
 	 * Signal an error in order to abort the transfer in case we ran out of
 	 * memory in accepting the data.
+	 * TODO test?
 	 */
 	if (PQExpBufferBroken(resp))
 		return 0;
@@ -1859,6 +1862,7 @@ finish_token_request(struct async_ctx *actx, struct token *tok)
 	 * There are references online to implementations using 403 for error
 	 * return which would violate the specification. For now we stick to the
 	 * specification but we might have to revisit this.
+	 * TODO test 401 and WWW-Authenticate
 	 */
 	if (response_code == 400 || response_code == 401)
 	{
