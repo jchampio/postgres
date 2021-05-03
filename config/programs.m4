@@ -153,7 +153,7 @@ AC_DEFUN([PGAC_CHECK_LIBCURL],
 [AC_CACHE_CHECK([for compatible libcurl], [pgac_cv_check_libcurl],
 [AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
 [#include <curl/curlver.h>
-#if LIBCURL_VERSION_MAJOR <= 8 && LIBCURL_VERSION_MINOR < 4
+#if LIBCURL_VERSION_MAJOR < 8 || (LIBCURL_VERSION_MAJOR == 8 && LIBCURL_VERSION_MINOR < 4)
 choke me
 #endif], [])],
 [pgac_cv_check_libcurl=yes],

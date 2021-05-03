@@ -853,7 +853,7 @@ if oauthopt == 'auto' and auto_features.disabled()
 endif
 
 if oauthopt in ['auto', 'curl']
-  oauth = dependency('libcurl', required: (oauthopt == 'curl'))
+  oauth = dependency('libcurl', version: '>= 8.4.0', required: (oauthopt == 'curl'))
 
   if oauth.found()
     oauth_library = 'curl'

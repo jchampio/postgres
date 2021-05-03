@@ -36,7 +36,7 @@ sub run
 	my $pid = open(my $read_fh, "-|", $ENV{PYTHON}, "t/oauth_server.py")
 		or die "failed to start OAuth server: $!";
 
-	read($read_fh, $port, 7) or die "failed to read port number: $!";
+	read($read_fh, $port, 7) // die "failed to read port number: $!";
 	chomp $port;
 	die "server did not advertise a valid port"
 		unless Scalar::Util::looks_like_number($port);

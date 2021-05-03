@@ -199,7 +199,7 @@ struct async_ctx
 	 */
 	const char *errctx;			/* not freed; must point to static allocation */
 	PQExpBufferData errbuf;
-	PQExpBufferData curl_err;
+	PQExpBufferData curl_err;	/* TODO test */
 
 	/*
 	 * These documents need to survive over multiple calls, and are therefore
@@ -210,7 +210,7 @@ struct async_ctx
 
 	bool		user_prompted;	/* have we already sent the authz prompt? */
 
-	int			running;
+	int			running;		/* TODO tracking zero doesn't help maybe */
 };
 
 /*
@@ -632,6 +632,7 @@ parse_oauth_json(struct async_ctx *actx, const struct json_field *fields)
 	/*
 	 * We only check the media-type and not the parameters, so we need to
 	 * perform a length limited comparison and not compare the whole string.
+	 * TODO test, TODO suffix match, TODO charset discussion
 	 */
 	if (pg_strncasecmp(content_type, "application/json", strlen("application/json")) != 0)
 	{
@@ -645,6 +646,7 @@ parse_oauth_json(struct async_ctx *actx, const struct json_field *fields)
 		return false;
 	}
 
+	/* TODO return value not possible */
 	if (!makeJsonLexContextCstringLen(&lex, resp->data, resp->len, PG_UTF8, true))
 	{
 		actx_error(actx, "out of memory");
@@ -805,6 +807,7 @@ parse_device_authz(struct async_ctx *actx, struct device_authz *authz)
 		/*
 		 * RFC 8628 specify 5 seconds as the default value if the server
 		 * doesn't provide an interval.
+		 * TODO test
 		 */
 		authz->interval = 5;
 	}
@@ -1238,7 +1241,8 @@ append_data(char *buf, size_t size, size_t nmemb, void *userdata)
 	PQExpBuffer resp = userdata;
 	size_t		len = size * nmemb;
 
-	/* In case we receive data over the threshold, abort the transfer */
+	/* In case we receive data over the threshold, abort the transfer
+	 * TODO test */
 	if ((resp->len + len) > MAX_OAUTH_RESPONSE_SIZE)
 		return 0;
 
@@ -1248,6 +1252,7 @@ append_data(char *buf, size_t size, size_t nmemb, void *userdata)
 	/*
 	 * Signal an error in order to abort the transfer in case we ran out of
 	 * memory in accepting the data.
+	 * TODO test?
 	 */
 	if (PQExpBufferBroken(resp))
 		return 0;
@@ -1293,6 +1298,7 @@ start_request(struct async_ctx *actx)
 	 * operations that can synchronously fail by this point like connections
 	 * to closed local ports. Fall through and leave the sanity check for the
 	 * next state consuming actx.
+	 * TODO are we guaranteed a callback if running == 0?
 	 */
 
 	return true;
@@ -1310,7 +1316,7 @@ drive_request(struct async_ctx *actx)
 	int			msgs_left;
 	bool		done;
 
-	/* Sanity check the previous operation */
+	/* Sanity check the previous operation TODO nope */
 	if (actx->running != 1)
 	{
 		actx_error(actx, "failed to queue HTTP request");
@@ -1702,6 +1708,7 @@ finish_token_request(struct async_ctx *actx, struct token *tok)
 	 * There are references online to implementations using 403 for error
 	 * return which would violate the specification. For now we stick to the
 	 * specification but we might have to revisit this.
+	 * TODO test 401 and WWW-Authenticate
 	 */
 	if (response_code == 400 || response_code == 401)
 	{
@@ -1934,6 +1941,7 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 				err = &tok.err;
 				if (!err->error)
 				{
+					/* TODO test */
 					actx_error(actx, "unknown error");
 					goto error_return;
 				}
@@ -1955,6 +1963,7 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 				 */
 				if (strcmp(err->error, "slow_down") == 0)
 				{
+					/* TODO test overflow */
 					int			prev_interval = actx->authz.interval;
 
 					actx->authz.interval += 5;
@@ -2029,6 +2038,7 @@ error_return:
 	else
 		appendPQExpBufferStr(&conn->errorMessage, actx->errbuf.data);
 
+	/* TODO newlines? */
 	if (actx->curl_err.len > 0)
 		appendPQExpBuffer(&conn->errorMessage, " (%s)", actx->curl_err.data);
 
