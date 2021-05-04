@@ -41,7 +41,7 @@ override CPPFLAGS += -DVAL_LDFLAGS_SL="\"$(LDFLAGS_SL)\""
 override CPPFLAGS += -DVAL_LIBS="\"$(LIBS)\""
 
 override CPPFLAGS := -DFRONTEND -I. -I$(top_srcdir)/src/common -I$(libpq_srcdir) $(CPPFLAGS)
-LIBS += $(PTHREAD_LIBS)
+LIBS += $(PTHREAD_LIBS) $(libpq_pgport)
 
 OBJS_COMMON = \
 	archive.o \

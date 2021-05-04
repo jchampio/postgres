@@ -1718,6 +1718,7 @@ NumericSortSupport
 NumericSumAccum
 NumericVar
 OAuthStep
+OAuthValidatorCallbacks
 OM_uint32
 OP
 OSAPerGroupState
@@ -3065,6 +3066,8 @@ VacuumRelation
 VacuumStmt
 ValidIOData
 ValidateIndexState
+ValidatorModuleState
+ValidatorModuleResult
 ValuesScan
 ValuesScanState
 Var
@@ -3660,6 +3663,7 @@ normal_rand_fctx
 nsphash_hash
 ntile_context
 numeric
+oauth_state
 object_access_hook_type
 object_access_hook_type_str
 off_t
