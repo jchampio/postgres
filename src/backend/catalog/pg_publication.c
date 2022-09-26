@@ -51,6 +51,7 @@ typedef struct
 	Oid			relid;			/* OID of published table */
 	Oid			pubid;			/* OID of publication that publishes this
 								 * table. */
+	bool		viaroot;		/* does pubid use publish_via_partition_root? */
 } published_rel;
 
 static void publication_translate_columns(Relation targetrel, List *columns,
@@ -180,56 +181,46 @@ pg_relation_is_publishable(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns true if the ancestor is in the list of published relations.
- * Otherwise, returns false.
- */
-static bool
-is_ancestor_member_tableinfos(Oid ancestor, List *table_infos)
-{
-	ListCell   *lc;
-
-	foreach(lc, table_infos)
-	{
-		Oid			relid = ((published_rel *) lfirst(lc))->relid;
-
-		if (relid == ancestor)
-			return true;
-	}
-
-	return false;
-}
-
-/*
- * Filter out the partitions whose parent tables are also present in the list.
+ * Filter out the tables who are already being published via a logical root.
+ *
+ * If we only had partitioned tables to check, this would be much easier: it's
+ * impossible for a partition root to be in this list unless pubviaroot=true for
+ * that table, so we would just have to check for the existence of an ancestor,
+ * and if any were found then we'd filter the table.
+ *
+ * Logical roots add another wrinkle, because it's acceptable for a
+ * pubviaroot=false publication to contain a logical root. (Logical roots can
+ * contain data of their own, unlike partition roots.) It's also possible for a
+ * logical root to be included in a pubviaroot publication without any or all of
+ * its children. This is not possible for a partition root, where all of the
+ * leaves are implicitly included.
+ *
+ * So, to keep things relatively consistent, this now uses the same code that
+ * the output plugin uses to decide which relation OID to publish data under. If
+ * the publishing OID is not the same as the relation OID, we remove it from
+ * this list.
+ *
+ * XXX And that's expensive.
  */
 static void
-filter_partitions(List *table_infos)
+filter_published_descendants(List *table_infos, List *publications)
 {
 	ListCell   *lc;
 
 	foreach(lc, table_infos)
 	{
-		bool		skip = false;
-		List	   *ancestors = NIL;
-		ListCell   *lc2;
 		published_rel *table_info = (published_rel *) lfirst(lc);
+		Oid			publish_as_relid;
+		List	   *rel_publications;
 
-		if (get_rel_relispartition(table_info->relid))
-			ancestors = get_partition_ancestors(table_info->relid);
+		rel_publications =
+			process_relation_publications(table_info->relid, publications, NULL,
+										  &publish_as_relid);
 
-		foreach(lc2, ancestors)
-		{
-			Oid			ancestor = lfirst_oid(lc2);
-
-			if (is_ancestor_member_tableinfos(ancestor, table_infos))
-			{
-				skip = true;
-				break;
-			}
-		}
-
-		if (skip)
+		if (publish_as_relid != table_info->relid)
 			table_infos = foreach_delete_current(table_infos, lc);
+
+		list_free(rel_publications);
 	}
 }
 
@@ -805,11 +796,15 @@ List *
 GetAllTablesPublicationRelations(bool pubviaroot)
 {
 	Relation	classRel;
+	Relation	inhRel;
 	ScanKeyData key[1];
 	TableScanDesc scan;
 	HeapTuple	tuple;
 	List	   *result = NIL;
 
+	/* TODO: is there a required order to acquire these locks? */
+	if (pubviaroot)
+		inhRel = table_open(InheritsRelationId, AccessShareLock);
 	classRel = table_open(RelationRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
@@ -825,7 +820,8 @@ GetAllTablesPublicationRelations(bool pubviaroot)
 		Oid			relid = relForm->oid;
 
 		if (is_publishable_class(relid, relForm) &&
-			!(relForm->relispartition && pubviaroot))
+			!(relForm->relispartition && pubviaroot) &&
+			!(pubviaroot && has_logical_parent(inhRel, relid)))
 			result = lappend_oid(result, relid);
 	}
 
@@ -854,6 +850,9 @@ GetAllTablesPublicationRelations(bool pubviaroot)
 	}
 
 	table_close(classRel, AccessShareLock);
+	if (pubviaroot)
+		table_close(inhRel, AccessShareLock);
+
 	return result;
 }
 
@@ -1070,6 +1069,7 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 		int			nelems,
 					i;
 		bool		viaroot = false;
+		List	   *publications = NIL;
 
 		/* create a function context for cross-call persistence */
 		funcctx = SRF_FIRSTCALL_INIT();
@@ -1093,6 +1093,7 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 			ListCell   *lc;
 
 			pub_elem = GetPublicationByName(TextDatumGetCString(elems[i]), false);
+			publications = lappend(publications, pub_elem);
 
 			/*
 			 * Publications support partitioned tables. If
@@ -1132,6 +1133,7 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 
 				table_info->relid = lfirst_oid(lc);
 				table_info->pubid = pub_elem->oid;
+				table_info->viaroot = pub_elem->pubviaroot;
 				table_infos = lappend(table_infos, table_info);
 			}
 
@@ -1141,15 +1143,14 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 		}
 
 		/*
-		 * If the publication publishes partition changes via their respective
-		 * root partitioned tables, we must exclude partitions in favor of
-		 * including the root partitioned tables. Otherwise, the function
-		 * could return both the child and parent tables which could cause
-		 * data of the child table to be double-published on the subscriber
-		 * side.
+		 * If the publication publishes table changes via their respective
+		 * logical root tables, we must exclude partitions in favor of
+		 * including the root tables. Otherwise, the function could return
+		 * both the child and parent tables which could cause data of the
+		 * child table to be double-published on the subscriber side.
 		 */
 		if (viaroot)
-			filter_partitions(table_infos);
+			filter_published_descendants(table_infos, publications);
 
 		/* Construct a tuple descriptor for the result rows. */
 		tupdesc = CreateTemplateTupleDesc(NUM_PUBLICATION_TABLES_ELEM);
@@ -1164,6 +1165,8 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 		funcctx->user_fctx = (void *) table_infos;
+
+		list_free(publications);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -1260,6 +1263,118 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 	SRF_RETURN_DONE(funcctx);
 }
 
+/*
+ * Returns a list of tables that should be copied during initial sync for the
+ * given root table and publications.
+ *
+ * The only time this list consists of anything more than the table itself is
+ * when a publication's publish_via_partition_root is set to true and the table
+ * has inherited child tables in the publications that have been marked with
+ * publish_via_parent.
+ */
+Datum
+pg_get_publication_rels_to_sync(PG_FUNCTION_ARGS)
+{
+	FuncCallContext *funcctx;
+	List	   *tables = NIL;
+
+	/* stuff done only on the first call of the function */
+	if (SRF_IS_FIRSTCALL())
+	{
+		Oid			rootid = PG_GETARG_OID(0);
+		MemoryContext oldcontext;
+		ArrayType  *arr;
+		Datum	   *elems;
+		int			nelems,
+					i;
+
+		/* create a function context for cross-call persistence */
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		/* switch to memory context appropriate for multiple function calls */
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		/*
+		 * Deconstruct the parameter into elements where each element is a
+		 * publication name.
+		 */
+		arr = PG_GETARG_ARRAYTYPE_P(1);
+		deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT,
+						  &elems, NULL, &nelems);
+
+		/* Get Oids of tables from each publication. */
+		for (i = 0; i < nelems; i++)
+		{
+			char	   *pubname = TextDatumGetCString(elems[i]);
+			Publication *publication = GetPublicationByName(pubname, false);
+			List	   *pub_tables = NIL;
+
+			/* TODO: do the tables in this list need to be locked? */
+			if (publication->pubviaroot)
+				pub_tables = find_all_logical_inheritors(rootid);
+			else
+				pub_tables = list_make1_oid(rootid);
+
+			if (!publication->alltables)
+			{
+				List	   *relids;
+				List	   *schemarelids;
+				List	   *published;
+				ListCell   *cell;
+
+				relids = GetPublicationRelations(publication->oid,
+												 publication->pubviaroot ?
+												 PUBLICATION_PART_ROOT :
+												 PUBLICATION_PART_ALL);
+				schemarelids = GetAllSchemaPublicationRelations(publication->oid,
+																publication->pubviaroot ?
+																PUBLICATION_PART_ROOT :
+																PUBLICATION_PART_LEAF);
+				published = list_concat_unique_oid(relids, schemarelids);
+
+				/*
+				 * First we have to check to make sure the root table is
+				 * actually part of the publication; if not, none of its
+				 * descendants' contents belong to it.
+				 */
+				if (!list_member_oid(published, rootid))
+					continue;
+
+				/*
+				 * Now filter out any descendants that aren't part of this
+				 * particular publication.
+				 */
+				foreach(cell, pub_tables)
+				{
+					Oid		current = lfirst_oid(cell);
+
+					if (!list_member_oid(published, current))
+						pub_tables = foreach_delete_current(pub_tables, cell);
+				}
+			}
+
+			tables = list_concat_unique_oid(tables, pub_tables);
+		}
+
+		funcctx->user_fctx = (void *) tables;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	/* stuff done on every call of the function */
+	funcctx = SRF_PERCALL_SETUP();
+	tables = (List *) funcctx->user_fctx;
+
+	if (funcctx->call_cntr < list_length(tables))
+	{
+		Oid			relid = list_nth_oid(tables, funcctx->call_cntr);
+
+		SRF_RETURN_NEXT(funcctx, ObjectIdGetDatum(relid));
+	}
+
+	SRF_RETURN_DONE(funcctx);
+}
+
 List *
 process_relation_publications(Oid relid, const List *publications,
 							  PublicationActions *pubactions,
@@ -1279,8 +1394,7 @@ process_relation_publications(Oid relid, const List *publications,
 	bool		am_partition = get_rel_relispartition(relid);
 	char		relkind = get_rel_relkind(relid);
 	List	   *rel_publications = NIL;
-
-	*publish_as_relid = relid;
+	Oid			publish_candidate = relid;
 
 	foreach(lc, publications)
 	{
@@ -1296,55 +1410,57 @@ process_relation_publications(Oid relid, const List *publications,
 		int			ancestor_level = 0;
 
 		/*
-		 * If this is a FOR ALL TABLES publication, pick the partition
+		 * If this is a FOR ALL TABLES publication, pick the logical
 		 * root and set the ancestor level accordingly.
 		 */
 		if (pub->alltables)
 		{
 			publish = true;
-			if (pub->pubviaroot && am_partition)
+			if (pub->pubviaroot)
 			{
-				List	   *ancestors = get_partition_ancestors(relid);
+				List	   *ancestors;
 
-				pub_relid = llast_oid(ancestors);
-				ancestor_level = list_length(ancestors);
+				ancestors = get_logical_ancestors(relid, am_partition);
+				if (ancestors != NIL)
+				{
+					pub_relid = llast_oid(ancestors);
+					ancestor_level = list_length(ancestors);
+				}
 			}
 		}
 
 		if (!publish)
 		{
 			bool		ancestor_published = false;
+			Oid			ancestor;
+			int			level;
+			List	   *ancestors;
 
 			/*
-			 * For a partition, check if any of the ancestors are
-			 * published.  If so, note down the topmost ancestor that is
+			 * Check if any of the logical ancestors (that is, partition
+			 * parents or tables marked with publish_via_parent) are
+			 * published. If so, note down the topmost ancestor that is
 			 * published via this publication, which will be used as the
-			 * relation via which to publish the partition's changes.
+			 * relation via which to publish this table's changes.
 			 */
-			if (am_partition)
+			ancestors = get_logical_ancestors(relid, am_partition);
+			ancestor = GetTopMostAncestorInPublication(pub->oid,
+													   ancestors,
+													   &level);
+
+			if (ancestor != InvalidOid)
 			{
-				Oid			ancestor;
-				int			level;
-				List	   *ancestors = get_partition_ancestors(relid);
-
-				ancestor = GetTopMostAncestorInPublication(pub->oid,
-														   ancestors,
-														   &level);
-
-				if (ancestor != InvalidOid)
+				ancestor_published = true;
+				if (pub->pubviaroot)
 				{
-					ancestor_published = true;
-					if (pub->pubviaroot)
-					{
-						pub_relid = ancestor;
-						ancestor_level = level;
-					}
+					pub_relid = ancestor;
+					ancestor_level = level;
 				}
 			}
 
 			if (list_member_oid(pubids, pub->oid) ||
 				list_member_oid(schemaPubids, pub->oid) ||
-				ancestor_published)
+				(am_partition && ancestor_published))
 				publish = true;
 		}
 
@@ -1359,10 +1475,13 @@ process_relation_publications(Oid relid, const List *publications,
 		if (publish &&
 			(relkind != RELKIND_PARTITIONED_TABLE || pub->pubviaroot))
 		{
-			pubactions->pubinsert |= pub->pubactions.pubinsert;
-			pubactions->pubupdate |= pub->pubactions.pubupdate;
-			pubactions->pubdelete |= pub->pubactions.pubdelete;
-			pubactions->pubtruncate |= pub->pubactions.pubtruncate;
+			if (pubactions)
+			{
+				pubactions->pubinsert |= pub->pubactions.pubinsert;
+				pubactions->pubupdate |= pub->pubactions.pubupdate;
+				pubactions->pubdelete |= pub->pubactions.pubdelete;
+				pubactions->pubtruncate |= pub->pubactions.pubtruncate;
+			}
 
 			/*
 			 * We want to publish the changes as the top-most ancestor
@@ -1381,7 +1500,7 @@ process_relation_publications(Oid relid, const List *publications,
 			 */
 			if (publish_ancestor_level < ancestor_level)
 			{
-				*publish_as_relid = pub_relid;
+				publish_candidate = pub_relid;
 				publish_ancestor_level = ancestor_level;
 
 				/* reset the publication list for this relation */
@@ -1390,7 +1509,7 @@ process_relation_publications(Oid relid, const List *publications,
 			else
 			{
 				/* Same ancestor level, has to be the same OID. */
-				Assert(*publish_as_relid == pub_relid);
+				Assert(publish_candidate == pub_relid);
 			}
 
 			/* Track publications for this ancestor. */
@@ -1400,6 +1519,9 @@ process_relation_publications(Oid relid, const List *publications,
 
 	list_free(pubids);
 	list_free(schemaPubids);
+
+	if (publish_as_relid)
+		*publish_as_relid = publish_candidate;
 
 	return rel_publications;
 }
