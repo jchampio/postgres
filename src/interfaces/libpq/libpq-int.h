@@ -465,7 +465,8 @@ struct pg_conn
 										 * codes */
 	bool		client_finished_auth;	/* have we finished our half of the
 										 * authentication exchange? */
-
+	const char **sasl_mechs;	/* list of allowed/denied SASL mechanisms */
+	bool		sasl_mechs_denied;	/* is the sasl_mechs list forbidden? */
 
 	/* Transient state needed while establishing connection */
 	PGTargetServerType target_server_type;	/* desired session properties */
