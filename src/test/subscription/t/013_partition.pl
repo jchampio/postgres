@@ -901,12 +901,15 @@ $node_publisher->safe_psql('postgres', "
 	BEFORE INSERT ON itab1
 	FOR EACH ROW EXECUTE FUNCTION itab1_trigger();");
 
-# Note that itab1_1 should not be published using its own identity here.
 $node_publisher->safe_psql('postgres',
-	"CREATE PUBLICATION pub_iroot FOR TABLE itab1, itab1_1" #publish_via_inheritance_root = true)" # TODO
-);
-#$node_publisher->safe_psql('postgres',
-	#"ALTER PUBLICATION pub_all SET (publish_via_inheritance_root = true)"); # #TODO
+	"SELECT pg_set_logical_root('itab1_1', 'itab1')");
+$node_publisher->safe_psql('postgres',
+	"SELECT pg_set_logical_root('itab1_2', 'itab1')");
+
+# itab1_1 should be published using its own identity here, since its parent is
+# not included.
+$node_publisher->safe_psql('postgres',
+	"ALTER PUBLICATION pub_viaroot ADD TABLE itab1_1");
 
 # prepare data for the initial sync
 $node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1)");
@@ -935,15 +938,9 @@ $node_subscriber1->safe_psql('postgres', "
 	BEFORE INSERT ON itab1
 	FOR EACH ROW EXECUTE FUNCTION itab_trigger();");
 
-# Subscriber 2 has no partitions at all.
+# Subscriber 2 only subscribes to a single partition.
 $node_subscriber2->safe_psql('postgres',
-	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
-
-$node_subscriber1->safe_psql('postgres',
-	"CREATE SUBSCRIPTION sub_iroot CONNECTION '$publisher_connstr' PUBLICATION pub_iroot"
-);
-$node_subscriber2->safe_psql('postgres',
-	"ALTER SUBSCRIPTION sub2 SET PUBLICATION pub_all");
+	"CREATE TABLE itab1_1 (a int PRIMARY KEY, b text)");
 
 # Wait for initial sync of all subscriptions
 $node_subscriber1->wait_for_subscription_sync;
@@ -953,7 +950,7 @@ $node_subscriber2->wait_for_subscription_sync;
 $result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab1");
 is($result, qq(1|), 'initial data synced for itab1 on subscriber 1');
 
-$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1");
-is($result, qq(1|), 'initial data synced for itab1 on subscriber 2');
+$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1_1");
+is($result, qq(1|), 'initial data synced for itab1_1 on subscriber 2');
 
 done_testing();
