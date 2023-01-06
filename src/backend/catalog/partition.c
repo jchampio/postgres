@@ -28,6 +28,7 @@
 #include "partitioning/partbounds.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/fmgroids.h"
+#include "utils/fmgrprotos.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -142,6 +143,12 @@ get_partition_ancestors(Oid relid)
 	table_close(inhRel, AccessShareLock);
 
 	return result;
+}
+
+Datum
+pg_set_logical_root(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_VOID();
 }
 
 /*

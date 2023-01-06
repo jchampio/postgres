@@ -11862,4 +11862,9 @@
   prorettype => 'bytea', proargtypes => 'pg_brin_minmax_multi_summary',
   prosrc => 'brin_minmax_multi_summary_send' },
 
+{ oid => '8136', descr => 'mark a table root for logical replication',
+  proname => 'pg_set_logical_root', provolatile => 'v', proparallel => 'u',
+  prorettype => 'void', proargtypes => 'regclass regclass',
+  prosrc => 'pg_set_logical_root' },
+
 ]
