@@ -911,18 +911,21 @@ $node_publisher->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"ALTER PUBLICATION pub_viaroot ADD TABLE itab1_1");
 
-# prepare data for the initial sync
 $node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1)");
 
-# Subscriber 1 has different partition names.
+# Subscriber 1 only subscribes to a single partition.
 $node_subscriber1->safe_psql('postgres',
+	"CREATE TABLE itab1_1 (a int PRIMARY KEY, b text)");
+
+# Subscriber 2 has different partition names.
+$node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
-$node_subscriber1->safe_psql('postgres',
+$node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE itab1_part1 (CHECK (a = 1)) INHERITS (itab1)");
-$node_subscriber1->safe_psql('postgres',
+$node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE itab1_part2 (CHECK (a = 2)) INHERITS (itab1)");
 
-$node_subscriber1->safe_psql('postgres', "
+$node_subscriber2->safe_psql('postgres', "
 	CREATE OR REPLACE FUNCTION itab_trigger()
 	RETURNS TRIGGER AS \$\$
 	BEGIN
@@ -933,24 +936,24 @@ $node_subscriber1->safe_psql('postgres', "
 	END;
 	\$\$
 	LANGUAGE plpgsql;");
-$node_subscriber1->safe_psql('postgres', "
+$node_subscriber2->safe_psql('postgres', "
 	CREATE TRIGGER itab_trigger
 	BEFORE INSERT ON itab1
 	FOR EACH ROW EXECUTE FUNCTION itab_trigger();");
 
-# Subscriber 2 only subscribes to a single partition.
+$node_subscriber1->safe_psql('postgres',
+	"ALTER SUBSCRIPTION sub_viaroot REFRESH PUBLICATION");
 $node_subscriber2->safe_psql('postgres',
-	"CREATE TABLE itab1_1 (a int PRIMARY KEY, b text)");
+	"ALTER SUBSCRIPTION sub2 REFRESH PUBLICATION");
 
-# Wait for initial sync of all subscriptions
 $node_subscriber1->wait_for_subscription_sync;
 $node_subscriber2->wait_for_subscription_sync;
 
 # check that data is synced correctly
-$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab1");
-is($result, qq(1|), 'initial data synced for itab1 on subscriber 1');
+$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab1_1");
+is($result, qq(1|), 'initial data synced for itab1_1 on subscriber 1');
 
-$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1_1");
-is($result, qq(1|), 'initial data synced for itab1_1 on subscriber 2');
+$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1");
+is($result, qq(1|), 'initial data synced for itab1 on subscriber 2');
 
 done_testing();
