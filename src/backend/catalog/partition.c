@@ -28,8 +28,6 @@
 #include "partitioning/partbounds.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/fmgroids.h"
-#include "utils/fmgrprotos.h"
-#include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -144,81 +142,6 @@ get_partition_ancestors(Oid relid)
 	table_close(inhRel, AccessShareLock);
 
 	return result;
-}
-
-Datum
-pg_set_logical_root(PG_FUNCTION_ARGS)
-{
-	Oid			tableoid = PG_GETARG_OID(0);
-	Oid			rootoid = PG_GETARG_OID(1);
-	char	   *tablename;
-	char	   *rootname;
-	Relation	inhRel;
-	ScanKeyData key;
-	SysScanDesc scan;
-	Oid			parent = InvalidOid;
-	HeapTuple	tuple, copyTuple;
-	Form_pg_inherits form;
-
-	/*
-	 * Check that the tables exist.
-	 * TODO: check inheritance
-	 * TODO: and identical schemas too? or does replication handle that?
-	 * TODO: check ownership
-	 */
-	tablename = get_rel_name(tableoid);
-	if (tablename == NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("OID %u does not refer to a table", tableoid)));
-	rootname = get_rel_name(rootoid);
-	if (rootname == NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("OID %u does not refer to a table", rootoid)));
-
-	/* Open pg_inherits with RowExclusiveLock so that we can update it. */
-	inhRel = table_open(InheritsRelationId, RowExclusiveLock);
-
-	/*
-	 * We have to make sure that the inheritance relationship already exists,
-	 * and that there is only one existing parent for this table.
-	 *
-	 * TODO: do we have to lock the tables themselves to avoid races?
-	 */
-	ScanKeyInit(&key,
-				Anum_pg_inherits_inhrelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(tableoid));
-
-	scan = systable_beginscan(inhRel, InheritsRelidSeqnoIndexId, true,
-							  NULL, 1, &key);
-	tuple = systable_getnext(scan);
-	if (HeapTupleIsValid(tuple))
-	{
-		form = (Form_pg_inherits) GETSTRUCT(tuple);
-		parent = form->inhparent;
-		copyTuple = heap_copytuple(tuple);
-
-		if (HeapTupleIsValid(systable_getnext(scan)))
-			/* TODO */ ;
-	}
-
-	if (parent != rootoid)
-		/* TODO */ ;
-
-	systable_endscan(scan);
-
-	/* Mark the inheritance as a logical root by setting it to zero. */
-	form = (Form_pg_inherits) GETSTRUCT(copyTuple);
-	form->inhseqno = 0;
-
-	CatalogTupleUpdate(inhRel, &copyTuple->t_self, copyTuple);
-
-	heap_freetuple(copyTuple);
-	table_close(inhRel, RowExclusiveLock);
-
-	PG_RETURN_VOID();
 }
 
 /*
