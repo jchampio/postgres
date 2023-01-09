@@ -659,13 +659,68 @@ PartitionHasPendingDetach(Oid partoid)
 	return false;				/* keep compiler quiet */
 }
 
+static Oid
+get_logical_parent_worker(Relation inhRel, Oid relid)
+{
+	SysScanDesc scan;
+	ScanKeyData key[2];
+	Oid			result = InvalidOid;
+	HeapTuple	tuple;
+
+	ScanKeyInit(&key[0],
+				Anum_pg_inherits_inhrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	ScanKeyInit(&key[1],
+				Anum_pg_inherits_inhseqno,
+				BTEqualStrategyNumber, F_INT4EQ,
+				Int32GetDatum(0));
+
+	scan = systable_beginscan(inhRel, InheritsRelidSeqnoIndexId, true,
+							  NULL, 2, key);
+	tuple = systable_getnext(scan);
+	if (HeapTupleIsValid(tuple))
+	{
+		Form_pg_inherits form = (Form_pg_inherits) GETSTRUCT(tuple);
+		result = form->inhparent;
+	}
+
+	systable_endscan(scan);
+
+	return result;
+}
+
+static void
+get_logical_ancestors_worker(Relation inhRel, Oid relid, List **ancestors)
+{
+	Oid			parentOid;
+
+	/*
+	 * Recursion ends at the topmost level, ie., when there's no parent.
+	 */
+	parentOid = get_logical_parent_worker(inhRel, relid);
+	if (parentOid == InvalidOid)
+		return;
+
+	*ancestors = lappend_oid(*ancestors, parentOid);
+	get_logical_ancestors_worker(inhRel, parentOid, ancestors);
+}
+
 List *
 get_logical_ancestors(Oid relid, bool is_partition)
 {
+	List	   *result = NIL;
+	Relation	inhRel;
+
+	/* For partitions, this is identical to get_partition_ancestors(). */
 	if (is_partition)
 		return get_partition_ancestors(relid);
 
-	return NIL;
+	inhRel = table_open(InheritsRelationId, AccessShareLock);
+	get_logical_ancestors_worker(inhRel, relid, &result);
+	table_close(inhRel, AccessShareLock);
+
+	return result;
 }
 
 Datum
