@@ -984,9 +984,9 @@ $node_subscriber1->wait_for_subscription_sync;
 $node_subscriber2->wait_for_subscription_sync;
 
 # check that data is synced correctly
-$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1");
+$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab1");
 is($result, qq(1|itab1), 'initial data synced for itab1 on subscriber 1');
-$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM ONLY itab1");
+$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM ONLY itab1");
 is($result, qq(1|itab1), 'initial data synced only to itab1 on subscriber 1');
 $result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab2_1");
 is($result, qq(1|itab2), 'initial data synced for itab2_1 on subscriber 1');
