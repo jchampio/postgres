@@ -906,18 +906,49 @@ $node_publisher->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"SELECT pg_set_logical_root('itab1_2', 'itab1')");
 
-# itab1_1 should be published using its own identity here, since its parent is
-# not included.
 $node_publisher->safe_psql('postgres',
-	"ALTER PUBLICATION pub_viaroot ADD TABLE itab1_1");
+	"CREATE TABLE itab2 (a int PRIMARY KEY, b text)");
+$node_publisher->safe_psql('postgres',
+	"CREATE TABLE itab2_1 (CHECK (a = 1)) INHERITS (itab2)");
 
-$node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1)");
+$node_publisher->safe_psql('postgres', "
+	CREATE OR REPLACE FUNCTION itab2_trigger()
+	RETURNS TRIGGER AS \$\$
+	BEGIN
+		IF ( NEW.a = 1 ) THEN INSERT INTO itab2_1 VALUES (NEW.*);
+		END IF;
+		RETURN NULL;
+	END;
+	\$\$
+	LANGUAGE plpgsql;");
+$node_publisher->safe_psql('postgres', "
+	CREATE TRIGGER itab2_trigger
+	BEFORE INSERT ON itab2
+	FOR EACH ROW EXECUTE FUNCTION itab2_trigger();");
 
-# Subscriber 1 only subscribes to a single partition.
+$node_publisher->safe_psql('postgres',
+	"SELECT pg_set_logical_root('itab2_1', 'itab2')");
+
+# itab2_1 should be published using its own identity here, since its parent is
+# not included. itab1_1 should be published via its parent, itab1, without
+# duplicating the rows.
+$node_publisher->safe_psql('postgres',
+	"ALTER PUBLICATION pub_viaroot ADD TABLE itab1, itab1_1, itab2_1");
+
+$node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1, 'itab1')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab2 VALUES (1, 'itab2')");
+
+# Subscriber 1 only subscribes to some of the partitions, to check for the
+# correct routing.
 $node_subscriber1->safe_psql('postgres',
-	"CREATE TABLE itab1_1 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
+$node_subscriber1->safe_psql('postgres',
+	"CREATE TABLE itab1_1 (CHECK (a = 1)) INHERITS (itab1)");
+$node_subscriber1->safe_psql('postgres',
+	"CREATE TABLE itab2_1 (a int PRIMARY KEY, b text)");
 
-# Subscriber 2 has different partition names.
+# Subscriber 2 has different partition names for itab1, and it doesn't partition
+# itab2 at all.
 $node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
 $node_subscriber2->safe_psql('postgres',
@@ -941,6 +972,9 @@ $node_subscriber2->safe_psql('postgres', "
 	BEFORE INSERT ON itab1
 	FOR EACH ROW EXECUTE FUNCTION itab_trigger();");
 
+$node_subscriber2->safe_psql('postgres',
+	"CREATE TABLE itab2 (a int PRIMARY KEY, b text)");
+
 $node_subscriber1->safe_psql('postgres',
 	"ALTER SUBSCRIPTION sub_viaroot REFRESH PUBLICATION");
 $node_subscriber2->safe_psql('postgres',
@@ -950,10 +984,16 @@ $node_subscriber1->wait_for_subscription_sync;
 $node_subscriber2->wait_for_subscription_sync;
 
 # check that data is synced correctly
-$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab1_1");
-is($result, qq(1|), 'initial data synced for itab1_1 on subscriber 1');
+$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1");
+is($result, qq(1|itab1), 'initial data synced for itab1 on subscriber 1');
+$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM ONLY itab1");
+is($result, qq(1|itab1), 'initial data synced only to itab1 on subscriber 1');
+$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab2_1");
+is($result, qq(1|itab2), 'initial data synced for itab2_1 on subscriber 1');
 
 $result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1");
-is($result, qq(1|), 'initial data synced for itab1 on subscriber 2');
+is($result, qq(1|itab1), 'initial data synced for itab1 on subscriber 2');
+$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab2");
+is($result, qq(1|itab2), 'initial data synced for itab2 on subscriber 2');
 
 done_testing();
