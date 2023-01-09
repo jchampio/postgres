@@ -24,6 +24,7 @@
 #include "access/table.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits.h"
+#include "catalog/partition.h"
 #include "parser/parse_type.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
@@ -656,6 +657,15 @@ PartitionHasPendingDetach(Oid partoid)
 
 	elog(ERROR, "relation %u is not a partition", partoid);
 	return false;				/* keep compiler quiet */
+}
+
+List *
+get_logical_ancestors(Oid relid, bool is_partition)
+{
+	if (is_partition)
+		return get_partition_ancestors(relid);
+
+	return NIL;
 }
 
 Datum
