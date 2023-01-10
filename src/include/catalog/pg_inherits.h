@@ -64,5 +64,6 @@ extern bool DeleteInheritsTuple(Oid inhrelid, Oid inhparent,
 								const char *childname);
 extern bool PartitionHasPendingDetach(Oid partoid);
 extern List *get_logical_ancestors(Oid relid, bool is_partition);
+extern bool has_logical_parent(Relation inhRel, Oid relid);
 
 #endif							/* PG_INHERITS_H */

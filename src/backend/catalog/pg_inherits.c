@@ -723,6 +723,12 @@ get_logical_ancestors(Oid relid, bool is_partition)
 	return result;
 }
 
+bool
+has_logical_parent(Relation inhRel, Oid relid)
+{
+	return (get_logical_parent_worker(inhRel, relid) != InvalidOid);
+}
+
 Datum
 pg_set_logical_root(PG_FUNCTION_ARGS)
 {

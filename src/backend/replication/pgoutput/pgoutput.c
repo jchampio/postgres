@@ -2147,14 +2147,9 @@ get_rel_sync_entry(PGOutputData *data, Relation relation)
 					}
 				}
 
-				/*
-				 * TODO: for pg_set_logical_root this will automatically include
-				 * logical descendants if the logical root is published. Is this
-				 * desirable or should that only happen for partitions?
-				 */
 				if (list_member_oid(pubids, pub->oid) ||
 					list_member_oid(schemaPubids, pub->oid) ||
-					ancestor_published)
+					(am_partition && ancestor_published))
 					publish = true;
 			}
 
