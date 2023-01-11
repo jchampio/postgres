@@ -776,8 +776,6 @@ GetAllTablesPublications(void)
  * If the publication publishes partition changes via their respective root
  * partitioned tables, we must exclude partitions in favor of including the
  * root partitioned tables.
- *
- * TODO: update for new pubviaroot rules
  */
 List *
 GetAllTablesPublicationRelations(bool pubviaroot)
