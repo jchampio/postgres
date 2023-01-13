@@ -891,6 +891,7 @@ $node_publisher->safe_psql('postgres', "
 	BEGIN
 		IF ( NEW.a = 1 ) THEN INSERT INTO itab1_1 VALUES (NEW.*);
 		ELSIF ( NEW.a = 2 ) THEN INSERT INTO itab1_2 VALUES (NEW.*);
+		ELSE RETURN NEW;
 		END IF;
 		RETURN NULL;
 	END;
@@ -916,6 +917,7 @@ $node_publisher->safe_psql('postgres', "
 	RETURNS TRIGGER AS \$\$
 	BEGIN
 		IF ( NEW.a = 1 ) THEN INSERT INTO itab2_1 VALUES (NEW.*);
+		ELSE RETURN NEW;
 		END IF;
 		RETURN NULL;
 	END;
@@ -935,11 +937,14 @@ $node_publisher->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"ALTER PUBLICATION pub_viaroot ADD TABLE itab1, itab1_1, itab2_1");
 
+$node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (0, 'itab1')");
 $node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1, 'itab1')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (2, 'itab1')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab2 VALUES (0, 'itab2')");
 $node_publisher->safe_psql('postgres', "INSERT INTO itab2 VALUES (1, 'itab2')");
 
-# Subscriber 1 only subscribes to some of the partitions, to check for the
-# correct routing.
+# Subscriber 1 only subscribes to some of the partitions, and does not set up
+# partition triggers, to check for the correct routing.
 $node_subscriber1->safe_psql('postgres',
 	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
 $node_subscriber1->safe_psql('postgres',
@@ -960,8 +965,9 @@ $node_subscriber2->safe_psql('postgres', "
 	CREATE OR REPLACE FUNCTION itab_trigger()
 	RETURNS TRIGGER AS \$\$
 	BEGIN
-		IF ( NEW.a = 1 ) THEN INSERT INTO itab1_part1 VALUES (NEW.*);
-		ELSIF ( NEW.a = 2 ) THEN INSERT INTO itab1_part2 VALUES (NEW.*);
+		IF ( NEW.a = 1 ) THEN INSERT INTO public.itab1_part1 VALUES (NEW.*);
+		ELSIF ( NEW.a = 2 ) THEN INSERT INTO public.itab1_part2 VALUES (NEW.*);
+		ELSE RETURN NEW;
 		END IF;
 		RETURN NULL;
 	END;
@@ -971,6 +977,8 @@ $node_subscriber2->safe_psql('postgres', "
 	CREATE TRIGGER itab_trigger
 	BEFORE INSERT ON itab1
 	FOR EACH ROW EXECUTE FUNCTION itab_trigger();");
+$node_subscriber2->safe_psql('postgres', "
+	ALTER TABLE itab1 ENABLE ALWAYS TRIGGER itab_trigger;");
 
 $node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE itab2 (a int PRIMARY KEY, b text)");
@@ -984,16 +992,38 @@ $node_subscriber1->wait_for_subscription_sync;
 $node_subscriber2->wait_for_subscription_sync;
 
 # check that data is synced correctly
-$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab1");
-is($result, qq(1|itab1), 'initial data synced for itab1 on subscriber 1');
-$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM ONLY itab1");
-is($result, qq(1|itab1), 'initial data synced only to itab1 on subscriber 1');
-$result = $node_subscriber1->safe_psql('postgres', "SELECT a, b FROM itab2_1");
+
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT a, b FROM itab1 ORDER BY 1, 2");
+is($result, qq(0|itab1
+1|itab1
+2|itab1), 'initial data synced for itab1 on subscriber 1');
+
+# all of the data should have been routed to itab1 directly (there are no
+# triggers on subscriber 1 to move it elsewhere)
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT a, b FROM ONLY itab1 ORDER BY 1, 2");
+is($result, qq(0|itab1
+1|itab1
+2|itab1), 'initial data correctly routed for itab1 on subscriber 1');
+
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT a, b FROM itab2_1 ORDER BY 1, 2");
 is($result, qq(1|itab2), 'initial data synced for itab2_1 on subscriber 1');
 
-$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab1");
-is($result, qq(1|itab1), 'initial data synced for itab1 on subscriber 2');
-$result = $node_subscriber2->safe_psql('postgres', "SELECT a, b FROM itab2");
-is($result, qq(1|itab2), 'initial data synced for itab2 on subscriber 2');
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT a, b FROM itab1 ORDER BY 1, 2");
+is($result, qq(0|itab1
+1|itab1
+2|itab1), 'initial data synced for itab1 on subscriber 2');
+
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT a, b FROM ONLY itab1 ORDER BY 1, 2");
+is($result, qq(0|itab1), 'initial data correctly routed for itab1 on subscriber 2');
+
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT a, b FROM itab2 ORDER BY 1, 2");
+is($result, qq(0|itab2
+1|itab2), 'initial data synced for itab2 on subscriber 2');
 
 done_testing();
