@@ -1030,6 +1030,9 @@ is($result, qq(0|itab2
 $node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1, 'itab1-new')");
 $node_publisher->safe_psql('postgres', "INSERT INTO itab2 VALUES (1, 'itab2-new')");
 
+$node_publisher->wait_for_catchup('sub_viaroot');
+$node_publisher->wait_for_catchup('sub2');
+
 $result = $node_subscriber1->safe_psql('postgres',
 	"SELECT a, b FROM ONLY itab1 ORDER BY 1, 2");
 is($result, qq(0|itab1
