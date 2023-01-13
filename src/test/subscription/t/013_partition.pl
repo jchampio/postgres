@@ -879,7 +879,7 @@ is($result, qq(4||1), 'updates of tab5 replicated correctly');
 
 # Test that replication works for older inheritance/trigger setups as well.
 $node_publisher->safe_psql('postgres',
-	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab1 (a int, b text)");
 $node_publisher->safe_psql('postgres',
 	"CREATE TABLE itab1_1 (CHECK (a = 1)) INHERITS (itab1)");
 $node_publisher->safe_psql('postgres',
@@ -908,7 +908,7 @@ $node_publisher->safe_psql('postgres',
 	"SELECT pg_set_logical_root('itab1_2', 'itab1')");
 
 $node_publisher->safe_psql('postgres',
-	"CREATE TABLE itab2 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab2 (a int, b text)");
 $node_publisher->safe_psql('postgres',
 	"CREATE TABLE itab2_1 (CHECK (a = 1)) INHERITS (itab2)");
 
@@ -946,16 +946,16 @@ $node_publisher->safe_psql('postgres', "INSERT INTO itab2 VALUES (1, 'itab2')");
 # Subscriber 1 only subscribes to some of the partitions, and does not set up
 # partition triggers, to check for the correct routing.
 $node_subscriber1->safe_psql('postgres',
-	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab1 (a int, b text)");
 $node_subscriber1->safe_psql('postgres',
 	"CREATE TABLE itab1_1 (CHECK (a = 1)) INHERITS (itab1)");
 $node_subscriber1->safe_psql('postgres',
-	"CREATE TABLE itab2_1 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab2_1 (a int, b text)");
 
 # Subscriber 2 has different partition names for itab1, and it doesn't partition
 # itab2 at all.
 $node_subscriber2->safe_psql('postgres',
-	"CREATE TABLE itab1 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab1 (a int, b text)");
 $node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE itab1_part1 (CHECK (a = 1)) INHERITS (itab1)");
 $node_subscriber2->safe_psql('postgres',
@@ -981,7 +981,7 @@ $node_subscriber2->safe_psql('postgres', "
 	ALTER TABLE itab1 ENABLE ALWAYS TRIGGER itab_trigger;");
 
 $node_subscriber2->safe_psql('postgres',
-	"CREATE TABLE itab2 (a int PRIMARY KEY, b text)");
+	"CREATE TABLE itab2 (a int, b text)");
 
 $node_subscriber1->safe_psql('postgres',
 	"ALTER SUBSCRIPTION sub_viaroot REFRESH PUBLICATION");
@@ -1025,5 +1025,39 @@ $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT a, b FROM itab2 ORDER BY 1, 2");
 is($result, qq(0|itab2
 1|itab2), 'initial data synced for itab2 on subscriber 2');
+
+# make sure new data is also correctly routed to the roots
+$node_publisher->safe_psql('postgres', "INSERT INTO itab1 VALUES (1, 'itab1-new')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab2 VALUES (1, 'itab2-new')");
+
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT a, b FROM ONLY itab1 ORDER BY 1, 2");
+is($result, qq(0|itab1
+1|itab1
+1|itab1-new
+2|itab1), 'new data routed for itab1 on subscriber 1');
+
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT a, b FROM itab2_1 ORDER BY 1, 2");
+is($result, qq(1|itab2
+1|itab2-new), 'new data routed for itab2_1 on subscriber 1');
+
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT a, b FROM itab1 ORDER BY 1, 2");
+is($result, qq(0|itab1
+1|itab1
+1|itab1-new
+2|itab1), 'new data routed for itab1 on subscriber 2');
+
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT a, b FROM itab1_part1 ORDER BY 1, 2");
+is($result, qq(1|itab1
+1|itab1-new), 'new data moved to itab1_part1 on subscriber 2');
+
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT a, b FROM itab2 ORDER BY 1, 2");
+is($result, qq(0|itab2
+1|itab2
+1|itab2-new), 'new data routed for itab2 on subscriber 2');
 
 done_testing();
