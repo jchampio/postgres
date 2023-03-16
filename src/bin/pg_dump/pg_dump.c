@@ -6354,6 +6354,7 @@ getTables(Archive *fout, int *numTables)
 	int			i_relacl;
 	int			i_acldefault;
 	int			i_ispartition;
+	int			i_has_policies;
 
 	/*
 	 * Find all the tables and table-like objects.
@@ -6394,6 +6395,13 @@ getTables(Archive *fout, int *numTables)
 						 "d.refobjid AS owning_tab, "
 						 "d.refobjsubid AS owning_col, "
 						 "tsp.spcname AS reltablespace, ");
+
+	if (fout->remoteVersion >= 90500)
+		appendPQExpBufferStr(query,
+							 "EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = c.oid) AS has_policies, ");
+	else
+		appendPQExpBufferStr(query,
+							 "false AS has_policies, ");
 
 	if (fout->remoteVersion >= 120000)
 		appendPQExpBufferStr(query,
@@ -6568,6 +6576,7 @@ getTables(Archive *fout, int *numTables)
 	i_relacl = PQfnumber(res, "relacl");
 	i_acldefault = PQfnumber(res, "acldefault");
 	i_ispartition = PQfnumber(res, "ispartition");
+	i_has_policies = PQfnumber(res, "has_policies");
 
 	if (dopt->lockWaitTimeout)
 	{
@@ -6657,6 +6666,17 @@ getTables(Archive *fout, int *numTables)
 			tblinfo[i].dobj.dump = DUMP_COMPONENT_NONE;
 		else
 			selectDumpableTable(&tblinfo[i], fout);
+
+		/*
+		 * If the table has no policies, we don't need to worry about those.
+		 *
+		 * For tables internal to an extension, this may mean we don't need to
+		 * take an ACCESS SHARE lock, which in turn allows less privileged users
+		 * to successfully perform a dump if they don't have SELECT access to
+		 * those tables (which they weren't trying to dump in the first place).
+		 */
+		if (strcmp(PQgetvalue(res, i, i_has_policies), "f") == 0)
+			tblinfo[i].dobj.dump &= ~DUMP_COMPONENT_POLICY;
 
 		/*
 		 * Now, consider the table "interesting" if we need to dump its
