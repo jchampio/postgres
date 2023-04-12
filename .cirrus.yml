@@ -482,7 +482,9 @@ task:
       tcl-tk \
       zstd
 
+    ls -l "/opt/homebrew/etc/openssl@3/"
     brew cleanup -s # to reduce cache size
+    ls -l "/opt/homebrew/etc/openssl@3/"
 
     # brew cleanup removes the empty certs directory in OPENSSLDIR, causing
     # OpenSSL to report unexpected errors ("unregistered scheme") during
@@ -494,7 +496,7 @@ task:
     # the etc/ prefix, so we hardcode the full path here. openssl@3 is pinned
     # above to try to minimize the chances of this changing beneath us, but it's
     # brittle...
-    mkdir -p "/opt/homebrew/etc/openssl@3/certs"
+    #mkdir -p "/opt/homebrew/etc/openssl@3/certs"
   upload_caches: homebrew
 
   ccache_cache:
