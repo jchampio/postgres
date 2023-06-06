@@ -1,0 +1,29 @@
+-- Tables are named after the percentage of values that are non-NULL.
+DROP TABLE IF EXISTS zero;
+DROP TABLE IF EXISTS twenty;
+DROP TABLE IF EXISTS fifty;
+DROP TABLE IF EXISTS eighty;
+DROP TABLE IF EXISTS hundred;
+
+\if :{?scale}
+\else
+  \set scale 1
+\endif
+
+CREATE TABLE zero AS
+  SELECT NULL AS i FROM generate_series(1, 100000 * :scale);
+
+CREATE TABLE twenty AS
+  SELECT CASE WHEN random() < 0.2 THEN i ELSE NULL END AS i
+    FROM generate_series(1, 100000 * :scale) i;
+
+CREATE TABLE fifty AS
+  SELECT CASE WHEN random() < 0.5 THEN i ELSE NULL END AS i
+    FROM generate_series(1, 100000 * :scale) i;
+
+CREATE TABLE eighty AS
+  SELECT CASE WHEN random() < 0.8 THEN i ELSE NULL END AS i
+    FROM generate_series(1, 100000 * :scale) i;
+
+CREATE TABLE hundred AS
+  SELECT i FROM generate_series(1, 100000 * :scale) i;
