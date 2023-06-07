@@ -1821,12 +1821,20 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (es->analyze)
 				show_tidbitmap_info((BitmapHeapScanState *) planstate, es);
 			break;
+		case T_SeqScan:
+			if (((SeqScan *) plan)->scankeys)
+				show_scan_qual(((SeqScan *) plan)->scankeys, "Scan Cond",
+							   planstate, ancestors, es);
+			show_scan_qual(plan->qual, "Filter", planstate, ancestors, es);
+			if (plan->qual)
+				show_instrumentation_count("Rows Removed by Filter", 1,
+										   planstate, es);
+			break;
 		case T_SampleScan:
 			show_tablesample(((SampleScan *) plan)->tablesample,
 							 planstate, ancestors, es);
-			/* fall through to print additional fields the same as SeqScan */
+			/* fall through to print additional fields the same as basic scans */
 			/* FALLTHROUGH */
-		case T_SeqScan:
 		case T_ValuesScan:
 		case T_CteScan:
 		case T_NamedTuplestoreScan:
