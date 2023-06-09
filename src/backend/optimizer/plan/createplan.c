@@ -2903,12 +2903,18 @@ reconstruct_null_tests(List *tests, NullTestType type, List *varset)
 
 		while ((i = bms_next_member(varattnos, i)) >= 0)
 		{
-			Var		   *var = makeNode(Var);
-			NullTest   *n = makeNode(NullTest);
+			AttrNumber	varattno = i + FirstLowInvalidHeapAttributeNumber;
+			Var		   *var;
+			NullTest   *n;
 
+			if (varattno == 0)
+				continue; /* skip whole-row vars */
+
+			var = makeNode(Var);
 			var->varno = foreach_current_index(lc);
-			var->varattno = i + FirstLowInvalidHeapAttributeNumber;
+			var->varattno = varattno;
 
+			n = makeNode(NullTest);
 			n->arg = (Expr *) var;
 			n->nulltesttype = type;
 			n->location = -1;

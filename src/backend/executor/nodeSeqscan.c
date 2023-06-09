@@ -28,6 +28,7 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "access/skey.h"
 #include "access/tableam.h"
 #include "executor/execdebug.h"
 #include "executor/nodeSeqscan.h"
@@ -70,7 +71,7 @@ SeqNext(SeqScanState *node)
 		 */
 		scandesc = table_beginscan(node->ss.ss_currentRelation,
 								   estate->es_snapshot,
-								   0, NULL);
+								   node->nkeys, node->scankeys);
 		node->ss.ss_currentScanDesc = scandesc;
 	}
 
@@ -116,6 +117,48 @@ ExecSeqScan(PlanState *pstate)
 					(ExecScanRecheckMtd) SeqRecheck);
 }
 
+static void
+create_scankeys(SeqScanState *scanstate, List *keyquals)
+{
+	struct ScanKeyData *keys;
+	int			nkeys;
+	ListCell   *l;
+
+	nkeys = list_length(keyquals);
+	keys = palloc(sizeof(struct ScanKeyData) * nkeys);
+
+	foreach(l, keyquals)
+	{
+		NullTest   *n;
+		Var		   *var;
+		int			typeflag;
+		int			i = foreach_current_index(l);
+
+		/*
+		 * create_seqscan_plan() only puts NullTests of Vars into the SeqScan's
+		 * key clauses, so that's all we handle here.
+		 */
+		n = lfirst_node(NullTest, l);
+		var = (Var *) n->arg;
+		Assert(IsA(var, Var));
+
+		typeflag = (n->nulltesttype == IS_NULL) ? SK_SEARCHNULL
+												: SK_SEARCHNOTNULL;
+
+		Assert(i < nkeys);
+		ScanKeyEntryInitialize(&keys[i],
+							   SK_ISNULL | typeflag,
+							   var->varattno,
+							   InvalidStrategy,
+							   InvalidOid,
+							   InvalidOid,
+							   InvalidOid,
+							   (Datum) 0);
+	}
+
+	scanstate->nkeys = nkeys;
+	scanstate->scankeys = keys;
+}
 
 /* ----------------------------------------------------------------
  *		ExecInitSeqScan
@@ -172,6 +215,12 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	 */
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
+
+	/*
+	 * Populate scankeys, if necessary.
+	 */
+	if (node->scankeys)
+		create_scankeys(scanstate, node->scankeys);
 
 	return scanstate;
 }
