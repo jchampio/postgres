@@ -2892,7 +2892,7 @@ create_limit_plan(PlannerInfo *root, LimitPath *best_path, int flags)
 
 
 static List *
-reconstruct_null_tests(List *tests, List *varset, NullTestType type)
+reconstruct_null_tests(List *tests, NullTestType type, List *varset)
 {
 	ListCell   *lc;
 
@@ -2932,7 +2932,6 @@ create_seqscan_plan(PlannerInfo *root, Path *best_path,
 {
 	SeqScan    *scan_plan;
 	Index		scan_relid = best_path->parent->relid;
-	ListCell   *lc;
 	List	   *scan_keys = NIL;
 
 	/* it should be a base rel... */
@@ -2952,17 +2951,12 @@ create_seqscan_plan(PlannerInfo *root, Path *best_path,
 			replace_nestloop_params(root, (Node *) scan_clauses);
 	}
 
-	foreach(lc, scan_clauses)
-	{
-		Node	   *clause = (Node *) lfirst(lc);
-		List	   *varset;
-
-		varset = find_forced_null_vars(clause);
-		scan_keys = reconstruct_null_tests(scan_keys, varset, IS_NULL);
-
-		varset = find_nonnullable_vars(clause);
-		scan_keys = reconstruct_null_tests(scan_keys, varset, IS_NOT_NULL);
-	}
+	scan_keys =
+		reconstruct_null_tests(scan_keys, IS_NULL,
+							   find_forced_null_vars((Node *) scan_clauses));
+	scan_keys =
+		reconstruct_null_tests(scan_keys, IS_NOT_NULL,
+							   find_nonnullable_vars((Node *) scan_clauses));
 
 	scan_plan = make_seqscan(tlist,
 							 scan_clauses,
