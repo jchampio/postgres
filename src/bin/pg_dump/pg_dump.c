@@ -3743,6 +3743,52 @@ dumpLOs(Archive *fout, const void *arg)
 }
 
 /*
+ * getTablesWithPolicies TODO
+ */
+void
+getTablesWithPolicies(Archive *fout)
+{
+	PQExpBuffer query;
+	PGresult   *res;
+	int			i_classid;
+	int			i_polrelid;
+	int			i,
+				ntups;
+
+	/* No policies before 9.5 */
+	if (fout->remoteVersion < 90500)
+		return;
+
+	query = createPQExpBuffer();
+
+	/* Figure out which tables have RLS policies. */
+	printfPQExpBuffer(query,
+					  "SELECT 'pg_class'::regclass::oid AS classid, polrelid "
+					  "FROM pg_catalog.pg_policy");
+
+	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+	ntups = PQntuples(res);
+
+	i_classid = PQfnumber(res, "classid");
+	i_polrelid = PQfnumber(res, "polrelid");
+
+	for (i = 0; i < ntups; i++)
+	{
+		CatalogId	objId;
+
+		objId.tableoid = atooid(PQgetvalue(res, i, i_classid));
+		objId.oid = atooid(PQgetvalue(res, i, i_polrelid));
+
+		recordPoliciesExist(objId);
+	}
+
+	PQclear(res);
+
+	destroyPQExpBuffer(query);
+}
+
+/*
  * getPolicies
  *	  get information about all RLS policies on dumpable tables.
  */
@@ -6354,7 +6400,6 @@ getTables(Archive *fout, int *numTables)
 	int			i_relacl;
 	int			i_acldefault;
 	int			i_ispartition;
-	int			i_has_policies;
 
 	/*
 	 * Find all the tables and table-like objects.
@@ -6395,13 +6440,6 @@ getTables(Archive *fout, int *numTables)
 						 "d.refobjid AS owning_tab, "
 						 "d.refobjsubid AS owning_col, "
 						 "tsp.spcname AS reltablespace, ");
-
-	if (fout->remoteVersion >= 90500)
-		appendPQExpBufferStr(query,
-							 "EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = c.oid) AS has_policies, ");
-	else
-		appendPQExpBufferStr(query,
-							 "false AS has_policies, ");
 
 	if (fout->remoteVersion >= 120000)
 		appendPQExpBufferStr(query,
@@ -6576,7 +6614,6 @@ getTables(Archive *fout, int *numTables)
 	i_relacl = PQfnumber(res, "relacl");
 	i_acldefault = PQfnumber(res, "acldefault");
 	i_ispartition = PQfnumber(res, "ispartition");
-	i_has_policies = PQfnumber(res, "has_policies");
 
 	if (dopt->lockWaitTimeout)
 	{
@@ -6675,7 +6712,7 @@ getTables(Archive *fout, int *numTables)
 		 * to successfully perform a dump if they don't have SELECT access to
 		 * those tables (which they weren't trying to dump in the first place).
 		 */
-		if (strcmp(PQgetvalue(res, i, i_has_policies), "f") == 0)
+		if (!hasPolicies(tblinfo[i].dobj.catId))
 			tblinfo[i].dobj.dump &= ~DUMP_COMPONENT_POLICY;
 
 		/*
