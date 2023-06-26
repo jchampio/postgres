@@ -3763,7 +3763,8 @@ getTablesWithPolicies(Archive *fout)
 
 	/* Figure out which tables have RLS policies. */
 	printfPQExpBuffer(query,
-					  "SELECT 'pg_class'::regclass::oid AS classid, polrelid "
+					  "SELECT DISTINCT 'pg_class'::regclass::oid AS classid, "
+					  "                polrelid "
 					  "FROM pg_catalog.pg_policy");
 
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
