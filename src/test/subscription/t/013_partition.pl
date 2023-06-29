@@ -1176,23 +1176,23 @@ $result = $node_subscriber2->safe_psql('postgres',
 is($result, qq(), 'initial data routed for itab3_1_1 on subscriber 2');
 
 # make sure new data is also correctly routed to the roots
-$node_publisher->safe_psql('postgres', "INSERT INTO itab3 VALUES (4, 'itab3-new')");
-$node_publisher->safe_psql('postgres', "INSERT INTO itab3_1 VALUES (4, 'itab3_1-new')");
-$node_publisher->safe_psql('postgres', "INSERT INTO itab3_1_1 VALUES (4, 'itab3_1_1-new')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab3 VALUES (4, 'itab3_new')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab3_1 VALUES (4, 'itab3_1_new')");
+$node_publisher->safe_psql('postgres', "INSERT INTO itab3_1_1 VALUES (4, 'itab3_1_1_new')");
 
 $node_publisher->wait_for_catchup('mixed');
 
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT a, b FROM ONLY itab3 ORDER BY 1, 2");
 is($result, qq(1|itab3
-4|itab3-new), 'new data routed for itab3 on subscriber 2');
+4|itab3_new), 'new data routed for itab3 on subscriber 2');
 
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT a, b FROM ONLY itab3_1 ORDER BY 1, 2");
 is($result, qq(2|itab3_1
 3|itab3_1_1
-4|itab3_1-new
-4|itab3_1_1-new), 'new data routed for itab3_1 on subscriber 2');
+4|itab3_1_1_new
+4|itab3_1_new), 'new data routed for itab3_1 on subscriber 2');
 
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT a, b FROM ONLY itab3_1_1");
