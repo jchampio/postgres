@@ -1556,7 +1556,7 @@ pg_get_relation_publishing_info(PG_FUNCTION_ARGS)
 
 	{
 		List	   *rel_publications;
-		PublicationActions pubactions;
+		PublicationActions pubactions = {0};
 		Oid			publish_as_relid;
 		ListCell   *lc;
 		Datum	   *puboids;
