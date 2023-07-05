@@ -177,7 +177,8 @@ static void copy_generic_path_info(Plan *dest, Path *src);
 static void copy_plan_costsize(Plan *dest, Plan *src);
 static void label_sort_with_costsize(PlannerInfo *root, Sort *plan,
 									 double limit_tuples);
-static SeqScan *make_seqscan(List *qptlist, List *qpqual, Index scanrelid);
+static SeqScan *make_seqscan(List *qptlist, List *qpqual, List *scankeys,
+							 Index scanrelid);
 static SampleScan *make_samplescan(List *qptlist, List *qpqual, Index scanrelid,
 								   TableSampleClause *tsc);
 static IndexScan *make_indexscan(List *qptlist, List *qpqual, Index scanrelid,
@@ -2890,6 +2891,42 @@ create_limit_plan(PlannerInfo *root, LimitPath *best_path, int flags)
  *****************************************************************************/
 
 
+static List *
+reconstruct_null_tests(List *tests, NullTestType type, List *varset)
+{
+	ListCell   *lc;
+
+	foreach(lc, varset)
+	{
+		Bitmapset  *varattnos = lfirst_node(Bitmapset, lc);
+		int			i = -1;
+
+		while ((i = bms_next_member(varattnos, i)) >= 0)
+		{
+			AttrNumber	varattno = i + FirstLowInvalidHeapAttributeNumber;
+			Var		   *var;
+			NullTest   *n;
+
+			if (varattno == 0)
+				continue; /* skip whole-row vars */
+
+			var = makeNode(Var);
+			var->varno = foreach_current_index(lc);
+			var->varattno = varattno;
+
+			n = makeNode(NullTest);
+			n->arg = (Expr *) var;
+			n->nulltesttype = type;
+			n->location = -1;
+
+			tests = lappend(tests, n);
+		}
+	}
+
+	return tests;
+}
+
+
 /*
  * create_seqscan_plan
  *	 Returns a seqscan plan for the base relation scanned by 'best_path'
@@ -2901,6 +2938,7 @@ create_seqscan_plan(PlannerInfo *root, Path *best_path,
 {
 	SeqScan    *scan_plan;
 	Index		scan_relid = best_path->parent->relid;
+	List	   *scan_keys = NIL;
 
 	/* it should be a base rel... */
 	Assert(scan_relid > 0);
@@ -2919,8 +2957,16 @@ create_seqscan_plan(PlannerInfo *root, Path *best_path,
 			replace_nestloop_params(root, (Node *) scan_clauses);
 	}
 
+	scan_keys =
+		reconstruct_null_tests(scan_keys, IS_NULL,
+							   find_forced_null_vars((Node *) scan_clauses));
+	scan_keys =
+		reconstruct_null_tests(scan_keys, IS_NOT_NULL,
+							   find_nonnullable_vars((Node *) scan_clauses));
+
 	scan_plan = make_seqscan(tlist,
 							 scan_clauses,
+							 scan_keys,
 							 scan_relid);
 
 	copy_generic_path_info(&scan_plan->scan.plan, best_path);
@@ -5465,6 +5511,7 @@ bitmap_subplan_mark_shared(Plan *plan)
 static SeqScan *
 make_seqscan(List *qptlist,
 			 List *qpqual,
+			 List *scankeys,
 			 Index scanrelid)
 {
 	SeqScan    *node = makeNode(SeqScan);
@@ -5475,6 +5522,7 @@ make_seqscan(List *qptlist,
 	plan->lefttree = NULL;
 	plan->righttree = NULL;
 	node->scan.scanrelid = scanrelid;
+	node->scankeys = scankeys;
 
 	return node;
 }

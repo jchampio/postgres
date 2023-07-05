@@ -631,6 +631,9 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				splan->scan.plan.qual =
 					fix_scan_list(root, splan->scan.plan.qual,
 								  rtoffset, NUM_EXEC_QUAL(plan));
+				splan->scankeys =
+					fix_scan_list(root, splan->scankeys,
+								  rtoffset, NUM_EXEC_QUAL(plan));
 			}
 			break;
 		case T_SampleScan:
