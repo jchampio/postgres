@@ -186,16 +186,10 @@ void
 freeJsonLexContext(JsonLexContext *lex)
 {
 	if (lex->flags & JSONLEX_FREE_STRVAL)
-	{
-		pfree(lex->strval->data);
-		pfree(lex->strval);
-	}
+		destroyStringInfo(lex->strval);
 
 	if (lex->errormsg)
-	{
-		pfree(lex->errormsg->data);
-		pfree(lex->errormsg);
-	}
+		destroyStringInfo(lex->errormsg);
 
 	if (lex->flags & JSONLEX_FREE_STRUCT)
 		pfree(lex);

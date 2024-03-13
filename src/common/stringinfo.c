@@ -350,3 +350,19 @@ enlargeStringInfo(StringInfo str, int needed)
 
 	str->maxlen = newlen;
 }
+
+/*
+ * destroyStringInfo
+ *
+ * Frees the StringInfo and its buffer (the opposite of makeStringInfo()). This
+ * must only be called on palloc'd StringInfos.
+ */
+void
+destroyStringInfo(StringInfo str)
+{
+	/* read-only StringInfos must not be destroyed */
+	Assert(str->maxlen != 0);
+
+	pfree(str->data);
+	pfree(str);
+}
