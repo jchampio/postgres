@@ -29,13 +29,15 @@
 #endif
 
 /*
- * In backend, we will use palloc/pfree along with StringInfo.  In frontend, use
- * malloc and PQExpBuffer, and return JSON_OUT_OF_MEMORY on out-of-memory.
+ * In backend, we will use palloc/pfree along with StringInfo.  In frontend,
+ * use malloc and PQExpBuffer, and return JSON_OUT_OF_MEMORY on out-of-memory.
  */
 #ifdef FRONTEND
 
 #define STRDUP(s) strdup(s)
 #define ALLOC(size) malloc(size)
+#define ALLOC0(size) calloc(1, size)
+#define FREE(s) free(s)
 
 #define appendStrVal		appendPQExpBuffer
 #define appendBinaryStrVal  appendBinaryPQExpBuffer
@@ -48,6 +50,8 @@
 
 #define STRDUP(s) pstrdup(s)
 #define ALLOC(size) palloc(size)
+#define ALLOC0(size) palloc0(size)
+#define FREE(s) pfree(s)
 
 #define appendStrVal		appendStringInfo
 #define appendBinaryStrVal  appendBinaryStringInfo
@@ -181,6 +185,9 @@ IsValidJsonNumber(const char *str, int len)
  * responsible for freeing the returned struct, either by calling
  * freeJsonLexContext() or (in backend environment) via memory context
  * cleanup.
+ *
+ * In frontend code this can return NULL on OOM, so callers must inspect the
+ * returned pointer.
  */
 JsonLexContext *
 makeJsonLexContextCstringLen(JsonLexContext *lex, char *json,
@@ -188,7 +195,9 @@ makeJsonLexContextCstringLen(JsonLexContext *lex, char *json,
 {
 	if (lex == NULL)
 	{
-		lex = palloc0(sizeof(JsonLexContext));
+		lex = ALLOC0(sizeof(JsonLexContext));
+		if (!lex)
+			return NULL;
 		lex->flags |= JSONLEX_FREE_STRUCT;
 	}
 	else
@@ -227,6 +236,9 @@ freeJsonLexContext(JsonLexContext *lex)
 {
 	static const JsonLexContext empty = {0};
 
+	if (!lex)
+		return;
+
 	if (lex->flags & JSONLEX_FREE_STRVAL)
 		destroyStrVal(lex->strval);
 
@@ -234,7 +246,7 @@ freeJsonLexContext(JsonLexContext *lex)
 		destroyStrVal(lex->errormsg);
 
 	if (lex->flags & JSONLEX_FREE_STRUCT)
-		pfree(lex);
+		FREE(lex);
 	else
 		*lex = empty;
 }
