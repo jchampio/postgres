@@ -31,6 +31,8 @@
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
 
+#define MAX_OAUTH_RESPONSE_SIZE (1024 * 1024)
+
 /*
  * Parsed JSON Representations
  *
@@ -683,7 +685,11 @@ parse_oauth_json(struct async_ctx *actx, const struct json_field *fields)
 		return false;
 	}
 
-	makeJsonLexContextCstringLen(&lex, resp->data, resp->len, PG_UTF8, true);
+	if (!makeJsonLexContextCstringLen(&lex, resp->data, resp->len, PG_UTF8, true))
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 
 	ctx.errbuf = &actx->errbuf;
 	ctx.fields = fields;
@@ -1334,7 +1340,12 @@ setup_curl_handles(struct async_ctx *actx)
 	 * pretty strict when it comes to provider behavior, so we have to check
 	 * what comes back anyway.)
 	 */
-	actx->headers = curl_slist_append(actx->headers, "Accept:");	/* TODO: check result */
+	actx->headers = curl_slist_append(actx->headers, "Accept:");
+	if (actx->headers == NULL)
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 	CHECK_SETOPT(actx, CURLOPT_HTTPHEADER, actx->headers, return false);
 
 	return true;
@@ -1356,9 +1367,19 @@ append_data(char *buf, size_t size, size_t nmemb, void *userdata)
 	PQExpBuffer resp = userdata;
 	size_t		len = size * nmemb;
 
-	/* TODO: cap the maximum size */
+	/* In case we receive data over the threshold, abort the transfer */
+	if ((resp->len + len) > MAX_OAUTH_RESPONSE_SIZE)
+		return 0;
+
+	/* The data passed from libcurl is not null-terminated */
 	appendBinaryPQExpBuffer(resp, buf, len);
-	/* TODO: check for broken buffer */
+
+	/*
+	 * Signal an error in order to abort the transfer in case we ran out of
+	 * memory in accepting the data.
+	 */
+	if (PQExpBufferBroken(resp))
+		return 0;
 
 	return len;
 }
@@ -1675,7 +1696,12 @@ start_device_authz(struct async_ctx *actx, PGconn *conn)
 	appendPQExpBuffer(work_buffer, "client_id=%s", conn->oauth_client_id);
 	if (conn->oauth_scope)
 		appendPQExpBuffer(work_buffer, "&scope=%s", conn->oauth_scope);
-	/* TODO check for broken buffer */
+
+	if (PQExpBufferBroken(work_buffer))
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 
 	/* Make our request. */
 	CHECK_SETOPT(actx, CURLOPT_URL, device_authz_uri, return false);
@@ -1817,32 +1843,34 @@ finish_token_request(struct async_ctx *actx, struct token *tok)
 	CHECK_GETINFO(actx, CURLINFO_RESPONSE_CODE, &response_code, return false);
 
 	/*
-	 * Per RFC 6749, Section 5, a successful response uses 200 OK. An error
-	 * response uses either 400 Bad Request or 401 Unauthorized.
-	 *
-	 * TODO: there are references online to 403 appearing in the wild...
-	 */
-	if (response_code != 200
-		&& response_code != 400
-		 /* && response_code != 401 TODO */ )
-	{
-		actx_error(actx, "unexpected response code %ld", response_code);
-		return false;
-	}
-
-	/*
-	 * Pull the fields we care about from the document.
+	 * Per RFC 6749, Section 5, a successful response uses 200 OK.
 	 */
 	if (response_code == 200)
 	{
 		actx->errctx = "failed to parse access token response";
 		if (!parse_access_token(actx, tok))
 			return false;		/* error message already set */
-	}
-	else if (!parse_token_error(actx, &tok->err))
-		return false;
 
-	return true;
+		return true;
+	}
+
+	/*
+	 * An error response uses either 400 Bad Request or 401 Unauthorized.
+	 * There are references online to implementations using 403 for error
+	 * return which would violate the specification. For now we stick to the
+	 * specification but we might have to revisit this.
+	 */
+	if (response_code == 400 || response_code == 401)
+	{
+		if (!parse_token_error(actx, &tok->err))
+			return false;
+
+		return true;
+	}
+
+	/* Any other response codes are considered invalid */
+	actx_error(actx, "unexpected response code %ld", response_code);
+	return false;
 }
 
 /*

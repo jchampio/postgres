@@ -247,7 +247,12 @@ handle_oauth_sasl_error(PGconn *conn, char *msg, int msglen)
 		return false;
 	}
 
-	makeJsonLexContextCstringLen(&lex, msg, msglen, PG_UTF8, true);
+	if (!makeJsonLexContextCstringLen(&lex, msg, msglen, PG_UTF8, true))
+	{
+		appendPQExpBufferStr(&conn->errorMessage,
+							 libpq_gettext("out of memory"));
+		return false;
+	}
 
 	initPQExpBuffer(&ctx.errbuf);
 	sem.semstate = &ctx;
