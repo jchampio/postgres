@@ -4,10 +4,10 @@ package PostgreSQL::Test::OAuthServer;
 
 use warnings;
 use strict;
-use threads;
 use Scalar::Util;
 use Socket;
 use IO::Select;
+use Test::More;
 
 local *server_socket;
 
@@ -34,9 +34,9 @@ sub run
 	my $port;
 
 	my $pid = open(my $read_fh, "-|", $ENV{PYTHON}, "t/oauth_server.py")
-		// die "failed to start OAuth server: $!";
+		or die "failed to start OAuth server: $!";
 
-	read($read_fh, $port, 7) // die "failed to read port number: $!";
+	read($read_fh, $port, 7) or die "failed to read port number: $!";
 	chomp $port;
 	die "server did not advertise a valid port"
 		unless Scalar::Util::looks_like_number($port);
@@ -45,14 +45,14 @@ sub run
 	$self->{'port'} = $port;
 	$self->{'child'} = $read_fh;
 
-	print("# OAuth provider (PID $pid) is listening on port $port\n");
+	diag("OAuth provider (PID $pid) is listening on port $port\n");
 }
 
 sub stop
 {
 	my $self = shift;
 
-	print("# Sending SIGTERM to OAuth provider PID: $self->{'pid'}\n");
+	diag("Sending SIGTERM to OAuth provider PID: $self->{'pid'}\n");
 
 	kill(15, $self->{'pid'});
 	$self->{'pid'} = undef;

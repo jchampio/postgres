@@ -3,7 +3,7 @@
  * fe-auth-oauth.c
  *	   The front-end (client) implementation of OAuth/OIDC authentication.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -247,7 +247,12 @@ handle_oauth_sasl_error(PGconn *conn, char *msg, int msglen)
 		return false;
 	}
 
-	makeJsonLexContextCstringLen(&lex, msg, msglen, PG_UTF8, true);
+	if (!makeJsonLexContextCstringLen(&lex, msg, msglen, PG_UTF8, true))
+	{
+		appendPQExpBufferStr(&conn->errorMessage,
+							 libpq_gettext("out of memory"));
+		return false;
+	}
 
 	initPQExpBuffer(&ctx.errbuf);
 	sem.semstate = &ctx;

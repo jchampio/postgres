@@ -476,9 +476,9 @@ generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen)
 	initStringInfo(&buf);
 
 	/*
-	 * TODO: note that escaping here should be belt-and-suspenders, since
-	 * escapable characters aren't valid in either the issuer URI or the scope
-	 * list, but the HBA doesn't enforce that yet.
+	 * Escaping the string here is belt-and-suspenders defensive programming
+	 * since escapable characters aren't valid in either the issuer URI or the
+	 * scope list, but the HBA doesn't enforce that yet.
 	 */
 	appendStringInfoString(&buf, "{ \"status\": \"invalid_token\", ");
 
@@ -533,7 +533,9 @@ validate_token_format(const char *header)
 	if (!header || strlen(header) <= 7)
 	{
 		ereport(COMMERROR,
-				(errmsg("malformed OAuth bearer token 1")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAuth bearer token"),
+				errdetail_log("Bearer token is less than 8 bytes."));
 		return NULL;
 	}
 
@@ -551,9 +553,9 @@ validate_token_format(const char *header)
 	if (!*token)
 	{
 		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAuth bearer token 2"),
-				 errdetail("Bearer token is empty.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAuth bearer token"),
+				errdetail_log("Bearer token is empty."));
 		return NULL;
 	}
 
@@ -573,9 +575,9 @@ validate_token_format(const char *header)
 		 * of someone's password into the logs.
 		 */
 		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAuth bearer token 3"),
-				 errdetail("Bearer token is not in the correct format.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAuth bearer token"),
+				errdetail_log("Bearer token is not in the correct format."));
 		return NULL;
 	}
 
@@ -617,10 +619,10 @@ validate(Port *port, const char *auth)
 	/* Make sure the validator authenticated the user. */
 	if (ret->authn_id == NULL || ret->authn_id[0] == '\0')
 	{
-		/* TODO: use logdetail; reduce message duplication */
 		ereport(LOG,
-				(errmsg("OAuth bearer authentication failed for user \"%s\": validator provided no identity",
-						port->user_name)));
+				errmsg("OAuth bearer authentication failed for user \"%s\"",
+					   port->user_name),
+				errdetail_log("Validator provided no identity"));
 		return false;
 	}
 

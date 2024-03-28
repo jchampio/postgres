@@ -3057,6 +3057,7 @@ VacuumStmt
 ValidIOData
 ValidateIndexState
 ValidatorModuleState
+ValidatorModuleResult
 ValuesScan
 ValuesScanState
 Var

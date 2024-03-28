@@ -116,6 +116,8 @@ backend_src = $(top_srcdir)/src/backend
 # which seems to insert references to that even in pure C code. Excluding
 # __tsan_func_exit is necessary when using ThreadSanitizer data race detector
 # which use this function for instrumentation of function exit.
+# libcurl registers an exit handler in the memory debugging code when running
+# with LeakSanitizer.
 # Skip the test when profiling, as gcc may insert exit() calls for that.
 # Also skip the test on platforms where libpq infrastructure may be provided
 # by statically-linked libraries, as we can't expect them to honor this
@@ -123,7 +125,7 @@ backend_src = $(top_srcdir)/src/backend
 libpq-refs-stamp: $(shlib)
 ifneq ($(enable_coverage), yes)
 ifeq (,$(filter solaris,$(PORTNAME)))
-	@if nm -A -u $< 2>/dev/null | grep -v -e __cxa_atexit -e __tsan_func_exit | grep exit; then \
+	@if nm -A -u $< 2>/dev/null | grep -v -e __cxa_atexit -e __tsan_func_exit -e _atexit | grep exit; then \
 		echo 'libpq must not be calling any function which invokes exit'; exit 1; \
 	fi
 endif

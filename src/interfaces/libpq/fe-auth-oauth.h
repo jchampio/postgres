@@ -4,7 +4,7 @@
  *
  *	  Definitions for OAuth authentication implementations
  *
- * Portions Copyright (c) 2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2024, PostgreSQL Global Development Group
  *
  * src/interfaces/libpq/fe-auth-oauth.h
  *
