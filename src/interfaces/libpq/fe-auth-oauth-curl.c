@@ -3,7 +3,7 @@
  * fe-auth-oauth-curl.c
  *	   The libcurl implementation of OAuth/OIDC authentication.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -30,6 +30,8 @@
 #include "fe-auth-oauth.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
+
+#define MAX_OAUTH_RESPONSE_SIZE (1024 * 1024)
 
 /*
  * Parsed JSON Representations
@@ -143,7 +145,7 @@ free_token(struct token *tok)
 /* States for the overall async machine. */
 typedef enum
 {
-	OAUTH_STEP_INIT,
+	OAUTH_STEP_INIT = 0,
 	OAUTH_STEP_DISCOVERY,
 	OAUTH_STEP_DEVICE_AUTHORIZATION,
 	OAUTH_STEP_TOKEN_REQUEST,
@@ -151,8 +153,9 @@ typedef enum
 } OAuthStep;
 
 /*
- * The async_ctx holds onto state that needs to persist across multiple calls to
- * pg_fe_run_oauth_flow(). Almost everything interacts with this in some way.
+ * The async_ctx holds onto state that needs to persist across multiple calls
+ * to pg_fe_run_oauth_flow(). Almost everything interacts with this in some
+ * way.
  */
 struct async_ctx
 {
@@ -162,9 +165,10 @@ struct async_ctx
 	int			timerfd;		/* a timerfd for signaling async timeouts */
 #endif
 	pgsocket	mux;			/* the multiplexer socket containing all
-								 * descriptors tracked by cURL, plus the
+								 * descriptors tracked by libcurl, plus the
 								 * timerfd */
-	CURLM	   *curlm;			/* top-level multi handle for cURL operations */
+	CURLM	   *curlm;			/* top-level multi handle for libcurl
+								 * operations */
 	CURL	   *curl;			/* the (single) easy handle for serial
 								 * requests */
 
@@ -183,7 +187,7 @@ struct async_ctx
 	 *				actx_error[_str] to manipulate this. This must be filled
 	 *				with something useful on an error.
 	 *
-	 * - curl_err:	an optional static error buffer used by cURL to put
+	 * - curl_err:	an optional static error buffer used by libcurl to put
 	 *				detailed information about failures. Unfortunately
 	 *				untranslatable.
 	 *
@@ -195,7 +199,7 @@ struct async_ctx
 	 */
 	const char *errctx;			/* not freed; must point to static allocation */
 	PQExpBufferData errbuf;
-	char		curl_err[CURL_ERROR_SIZE];
+	PQExpBufferData curl_err;
 
 	/*
 	 * These documents need to survive over multiple calls, and are therefore
@@ -205,6 +209,8 @@ struct async_ctx
 	struct device_authz authz;
 
 	bool		user_prompted;	/* have we already sent the authz prompt? */
+
+	int			running;
 };
 
 /*
@@ -238,7 +244,7 @@ free_curl_async_ctx(PGconn *conn, void *ctx)
 
 		if (err)
 			libpq_append_conn_error(conn,
-									"cURL easy handle removal failed: %s",
+									"libcurl easy handle removal failed: %s",
 									curl_multi_strerror(err));
 	}
 
@@ -258,7 +264,7 @@ free_curl_async_ctx(PGconn *conn, void *ctx)
 
 		if (err)
 			libpq_append_conn_error(conn,
-									"cURL multi handle cleanup failed: %s",
+									"libcurl multi handle cleanup failed: %s",
 									curl_multi_strerror(err));
 	}
 
@@ -292,8 +298,8 @@ free_curl_async_ctx(PGconn *conn, void *ctx)
 	appendPQExpBufferStr(&(ACTX)->errbuf, S)
 
 /*
- * Macros for getting and setting state for the connection's two cURL handles,
- * so you don't have to write out the error handling every time.
+ * Macros for getting and setting state for the connection's two libcurl
+ * handles, so you don't have to write out the error handling every time.
  */
 
 #define CHECK_MSETOPT(ACTX, OPT, VAL, FAILACTION) \
@@ -622,19 +628,28 @@ parse_oauth_json(struct async_ctx *actx, const struct json_field *fields)
 		actx_error(actx, "no content type was provided");
 		goto cleanup;
 	}
-	else if (strcasecmp(content_type, "application/json") != 0)
+
+	/*
+	 * We only check the media-type and not the parameters, so we need to
+	 * perform a length limited comparison and not compare the whole string.
+	 */
+	if (pg_strncasecmp(content_type, "application/json", strlen("application/json")) != 0)
 	{
-		actx_error(actx, "unexpected content type \"%s\"", content_type);
-		goto cleanup;
+		actx_error(actx, "unexpected content type: \"%s\"", content_type);
+		return false;
 	}
 
 	if (strlen(resp->data) != resp->len)
 	{
 		actx_error(actx, "response contains embedded NULLs");
-		goto cleanup;
+		return false;
 	}
 
-	makeJsonLexContextCstringLen(&lex, resp->data, resp->len, PG_UTF8, true);
+	if (!makeJsonLexContextCstringLen(&lex, resp->data, resp->len, PG_UTF8, true))
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 
 	ctx.errbuf = &actx->errbuf;
 	ctx.fields = fields;
@@ -787,7 +802,11 @@ parse_device_authz(struct async_ctx *actx, struct device_authz *authz)
 		authz->interval = parse_interval(authz->interval_str);
 	else
 	{
-		/* TODO: handle default interval of 5 seconds */
+		/*
+		 * RFC 8628 specify 5 seconds as the default value if the server
+		 * doesn't provide an interval.
+		 */
+		authz->interval = 5;
 	}
 
 	return true;
@@ -838,7 +857,7 @@ parse_access_token(struct async_ctx *actx, struct token *tok)
 }
 
 /*
- * cURL Multi Setup/Callbacks
+ * libcurl Multi Setup/Callbacks
  */
 
 /*
@@ -894,7 +913,7 @@ setup_multiplexer(struct async_ctx *actx)
 
 /*
  * Adds and removes sockets from the multiplexer set, as directed by the
- * cURL multi handle.
+ * libcurl multi handle.
  */
 static int
 register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
@@ -925,7 +944,7 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 			break;
 
 		default:
-			actx_error(actx, "unknown cURL socket operation (%d)", what);
+			actx_error(actx, "unknown libcurl socket operation: %d", what);
 			return -1;
 	}
 
@@ -997,7 +1016,7 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 			break;
 
 		default:
-			actx_error(actx, "unknown cURL socket operation (%d)", what);
+			actx_error(actx, "unknown libcurl socket operation: %d", what);
 			return -1;
 	}
 
@@ -1018,7 +1037,7 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 		/*
 		 * EV_RECEIPT should guarantee one EV_ERROR result for every change,
 		 * whether successful or not. Failed entries contain a non-zero errno
-		 * in the `data` field.
+		 * in the data field.
 		 */
 		Assert(ev_out[i].flags & EV_ERROR);
 
@@ -1043,9 +1062,8 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 
 /*
  * Adds or removes timeouts from the multiplexer set, as directed by the
- * cURL multi handle. Rather than continually adding and removing the timer,
- * we keep it in the set at all times and just disarm it when it's not
- * needed.
+ * libcurl multi handle. Rather than continually adding and removing the timer,
+ * we keep it in the set at all times and just disarm it when it's not needed.
  */
 static int
 register_timer(CURLM *curlm, long timeout, void *ctx)
@@ -1061,9 +1079,9 @@ register_timer(CURLM *curlm, long timeout, void *ctx)
 	else if (timeout == 0)
 	{
 		/*
-		 * A zero timeout means cURL wants us to call back immediately. That's
-		 * not technically an option for timerfd, but we can make the timeout
-		 * ridiculously short.
+		 * A zero timeout means libcurl wants us to call back immediately.
+		 * That's not technically an option for timerfd, but we can make the
+		 * timeout ridiculously short.
 		 *
 		 * TODO: maybe just signal drive_request() to immediately call back in
 		 * this case?
@@ -1098,8 +1116,21 @@ register_timer(CURLM *curlm, long timeout, void *ctx)
 	return 0;
 }
 
+static int
+debug_callback(CURL *handle, curl_infotype *type, char *data, size_t size,
+			   void *clientp)
+{
+	struct async_ctx *actx = (struct async_ctx *) clientp;
+
+	/* For now we only store TEXT debug information, extending is a TODO */
+	if (type == CURLINFO_TEXT)
+		appendBinaryPQExpBuffer(&actx->curl_err, data, size);
+
+	return 0;
+}
+
 /*
- * Initializes the two cURL handles in the async_ctx. The multi handle,
+ * Initializes the two libcurl handles in the async_ctx. The multi handle,
  * actx->curlm, is what drives the asynchronous engine and tells us what to do
  * next. The easy handle, actx->curl, encapsulates the state for a single
  * request/response. It's added to the multi handle as needed, during
@@ -1108,17 +1139,17 @@ register_timer(CURLM *curlm, long timeout, void *ctx)
 static bool
 setup_curl_handles(struct async_ctx *actx)
 {
-	curl_version_info_data	*curl_info;
+	curl_version_info_data *curl_info;
 
 	/*
 	 * Create our multi handle. This encapsulates the entire conversation with
-	 * cURL for this connection.
+	 * libcurl for this connection.
 	 */
 	actx->curlm = curl_multi_init();
 	if (!actx->curlm)
 	{
 		/* We don't get a lot of feedback on the failure reason. */
-		actx_error(actx, "failed to create cURL multi handle");
+		actx_error(actx, "failed to create libcurl multi handle");
 		return false;
 	}
 
@@ -1143,7 +1174,7 @@ setup_curl_handles(struct async_ctx *actx)
 	actx->curl = curl_easy_init();
 	if (!actx->curl)
 	{
-		actx_error(actx, "failed to create cURL handle");
+		actx_error(actx, "failed to create libcurl handle");
 		return false;
 	}
 
@@ -1160,9 +1191,14 @@ setup_curl_handles(struct async_ctx *actx)
 		/* No alternative resolver, TODO: warn about timeouts */
 	}
 
-	/* TODO investigate using conn->Pfdebug and CURLOPT_DEBUGFUNCTION here */
+	/*
+	 * Set a callback for retrieving error information from libcurl, the
+	 * function only takes effect when CURLOPT_VERBOSE has been set so make
+	 * sure the order is kept.
+	 */
+	CHECK_SETOPT(actx, CURLOPT_DEBUGDATA, actx, return false);
+	CHECK_SETOPT(actx, CURLOPT_DEBUGFUNCTION, debug_callback, return false);
 	CHECK_SETOPT(actx, CURLOPT_VERBOSE, 1L, return false);
-	CHECK_SETOPT(actx, CURLOPT_ERRORBUFFER, actx->curl_err, return false);
 
 	/*
 	 * Only HTTP[S] is allowed. TODO: disallow HTTP without user opt-in
@@ -1175,7 +1211,12 @@ setup_curl_handles(struct async_ctx *actx)
 	 * pretty strict when it comes to provider behavior, so we have to check
 	 * what comes back anyway.)
 	 */
-	actx->headers = curl_slist_append(actx->headers, "Accept:");	/* TODO: check result */
+	actx->headers = curl_slist_append(actx->headers, "Accept:");
+	if (actx->headers == NULL)
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 	CHECK_SETOPT(actx, CURLOPT_HTTPHEADER, actx->headers, return false);
 
 	return true;
@@ -1186,8 +1227,10 @@ setup_curl_handles(struct async_ctx *actx)
  */
 
 /*
- * Response callback from cURL; appends the response body into actx->work_data.
- * See start_request().
+ * Response callback from libcurl which appends the response body into
+ * actx->work_data (see start_request()). The maximum size of the data is
+ * defined by CURL_MAX_WRITE_SIZE which by default is 16kb (and can only be
+ * changed by recompiling libcurl).
  */
 static size_t
 append_data(char *buf, size_t size, size_t nmemb, void *userdata)
@@ -1195,9 +1238,19 @@ append_data(char *buf, size_t size, size_t nmemb, void *userdata)
 	PQExpBuffer resp = userdata;
 	size_t		len = size * nmemb;
 
-	/* TODO: cap the maximum size */
+	/* In case we receive data over the threshold, abort the transfer */
+	if ((resp->len + len) > MAX_OAUTH_RESPONSE_SIZE)
+		return 0;
+
+	/* The data passed from libcurl is not null-terminated */
 	appendBinaryPQExpBuffer(resp, buf, len);
-	/* TODO: check for broken buffer */
+
+	/*
+	 * Signal an error in order to abort the transfer in case we ran out of
+	 * memory in accepting the data.
+	 */
+	if (PQExpBufferBroken(resp))
+		return 0;
 
 	return len;
 }
@@ -1214,7 +1267,6 @@ static bool
 start_request(struct async_ctx *actx)
 {
 	CURLMcode	err;
-	int			running;
 
 	resetPQExpBuffer(&actx->work_data);
 	CHECK_SETOPT(actx, CURLOPT_WRITEFUNCTION, append_data, return false);
@@ -1228,7 +1280,7 @@ start_request(struct async_ctx *actx)
 		return false;
 	}
 
-	err = curl_multi_socket_action(actx->curlm, CURL_SOCKET_TIMEOUT, 0, &running);
+	err = curl_multi_socket_action(actx->curlm, CURL_SOCKET_TIMEOUT, 0, &actx->running);
 	if (err)
 	{
 		actx_error(actx, "asynchronous HTTP request failed: %s",
@@ -1237,19 +1289,11 @@ start_request(struct async_ctx *actx)
 	}
 
 	/*
-	 * Sanity check.
-	 *
-	 * TODO: even though this is nominally an asynchronous process, there are
-	 * apparently operations that can synchronously fail by this point, such
-	 * as connections to closed local ports. Maybe we need to let this case
-	 * fall through to drive_request instead, or else perform a
-	 * curl_multi_info_read immediately.
+	 * Even though this is nominally an asynchronous process, there are some
+	 * operations that can synchronously fail by this point like connections
+	 * to closed local ports. Fall through and leave the sanity check for the
+	 * next state consuming actx.
 	 */
-	if (running != 1)
-	{
-		actx_error(actx, "failed to queue HTTP request");
-		return false;
-	}
 
 	return true;
 }
@@ -1262,12 +1306,18 @@ static PostgresPollingStatusType
 drive_request(struct async_ctx *actx)
 {
 	CURLMcode	err;
-	int			running;
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
 
-	err = curl_multi_socket_all(actx->curlm, &running);
+	/* Sanity check the previous operation */
+	if (actx->running != 1)
+	{
+		actx_error(actx, "failed to queue HTTP request");
+		return false;
+	}
+
+	err = curl_multi_socket_all(actx->curlm, &actx->running);
 	if (err)
 	{
 		actx_error(actx, "asynchronous HTTP request failed: %s",
@@ -1275,7 +1325,7 @@ drive_request(struct async_ctx *actx)
 		return PGRES_POLLING_FAILED;
 	}
 
-	if (running)
+	if (actx->running)
 	{
 		/* We'll come back again. */
 		return PGRES_POLLING_READING;
@@ -1287,7 +1337,7 @@ drive_request(struct async_ctx *actx)
 		if (msg->msg != CURLMSG_DONE)
 		{
 			/*
-			 * Future cURL versions may define new message types; we don't
+			 * Future libcurl versions may define new message types; we don't
 			 * know how to handle them, so we'll ignore them.
 			 */
 			continue;
@@ -1304,7 +1354,7 @@ drive_request(struct async_ctx *actx)
 		err = curl_multi_remove_handle(actx->curlm, msg->easy_handle);
 		if (err)
 		{
-			actx_error(actx, "cURL easy handle removal failed: %s",
+			actx_error(actx, "libcurl easy handle removal failed: %s",
 					   curl_multi_strerror(err));
 			return PGRES_POLLING_FAILED;
 		}
@@ -1489,7 +1539,12 @@ start_device_authz(struct async_ctx *actx, PGconn *conn)
 	appendPQExpBuffer(work_buffer, "client_id=%s", conn->oauth_client_id);
 	if (conn->oauth_scope)
 		appendPQExpBuffer(work_buffer, "&scope=%s", conn->oauth_scope);
-	/* TODO check for broken buffer */
+
+	if (PQExpBufferBroken(work_buffer))
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 
 	/* Make our request. */
 	CHECK_SETOPT(actx, CURLOPT_URL, device_authz_uri, return false);
@@ -1631,37 +1686,40 @@ finish_token_request(struct async_ctx *actx, struct token *tok)
 	CHECK_GETINFO(actx, CURLINFO_RESPONSE_CODE, &response_code, return false);
 
 	/*
-	 * Per RFC 6749, Section 5, a successful response uses 200 OK. An error
-	 * response uses either 400 Bad Request or 401 Unauthorized.
-	 *
-	 * TODO: there are references online to 403 appearing in the wild...
-	 */
-	if (response_code != 200
-		&& response_code != 400
-		 /* && response_code != 401 TODO */ )
-	{
-		actx_error(actx, "unexpected response code %ld", response_code);
-		return false;
-	}
-
-	/*
-	 * Pull the fields we care about from the document.
+	 * Per RFC 6749, Section 5, a successful response uses 200 OK.
 	 */
 	if (response_code == 200)
 	{
 		actx->errctx = "failed to parse access token response";
 		if (!parse_access_token(actx, tok))
 			return false;		/* error message already set */
-	}
-	else if (!parse_token_error(actx, &tok->err))
-		return false;
 
-	return true;
+		return true;
+	}
+
+	/*
+	 * An error response uses either 400 Bad Request or 401 Unauthorized.
+	 * There are references online to implementations using 403 for error
+	 * return which would violate the specification. For now we stick to the
+	 * specification but we might have to revisit this.
+	 */
+	if (response_code == 400 || response_code == 401)
+	{
+		if (!parse_token_error(actx, &tok->err))
+			return false;
+
+		return true;
+	}
+
+	/* Any other response codes are considered invalid */
+	actx_error(actx, "unexpected response code %ld", response_code);
+	return false;
 }
 
+
 /*
- * The top-level, nonblocking entry point for the cURL implementation. This will
- * be called several times to pump the async engine.
+ * The top-level, nonblocking entry point for the libcurl implementation. This
+ * will be called several times to pump the async engine.
  *
  * The architecture is based on PQconnectPoll(). The first half drives the
  * connection state forward as necessary, returning if we're not ready to
@@ -1682,7 +1740,7 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 	struct token tok = {0};
 
 	/*
-	 * XXX This is not safe. cURL has stringent requirements for the thread
+	 * XXX This is not safe. libcurl has stringent requirements for the thread
 	 * context in which you call curl_global_init(), because it's going to try
 	 * initializing a bunch of other libraries (OpenSSL, Winsock...). And we
 	 * probably need to consider both the TLS backend libcurl is compiled
@@ -1691,16 +1749,16 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 	 * Recent versions of libcurl have improved the thread-safety situation,
 	 * but you apparently can't check at compile time whether the
 	 * implementation is thread-safe, and there's a chicken-and-egg problem
-	 * where you can't check the thread safety until you've initialized cURL,
-	 * which you can't do before you've made sure it's thread-safe...
+	 * where you can't check the thread safety until you've initialized
+	 * libcurl, which you can't do before you've made sure it's thread-safe...
 	 *
 	 * We know we've already initialized Winsock by this point, so we should
-	 * be able to safely skip that bit. But we have to tell cURL to initialize
-	 * everything else, because other pieces of our client executable may
-	 * already be using cURL for their own purposes. If we initialize libcurl
-	 * first, with only a subset of its features, we could break those other
-	 * clients nondeterministically, and that would probably be a nightmare to
-	 * debug.
+	 * be able to safely skip that bit. But we have to tell libcurl to
+	 * initialize everything else, because other pieces of our client
+	 * executable may already be using libcurl for their own purposes. If we
+	 * initialize libcurl first, with only a subset of its features, we could
+	 * break those other clients nondeterministically, and that would probably
+	 * be a nightmare to debug.
 	 */
 	curl_global_init(CURL_GLOBAL_ALL
 					 & ~CURL_GLOBAL_WIN32); /* we already initialized Winsock */
@@ -1729,6 +1787,7 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 
 		initPQExpBuffer(&actx->work_data);
 		initPQExpBuffer(&actx->errbuf);
+		initPQExpBuffer(&actx->curl_err);
 
 		if (!setup_multiplexer(actx))
 			goto error_return;
@@ -1873,16 +1932,20 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 				 * errors; anything else and we bail.
 				 */
 				err = &tok.err;
-				if (!err->error || (strcmp(err->error, "authorization_pending")
-									&& strcmp(err->error, "slow_down")))
+				if (!err->error)
 				{
-					/* TODO handle !err->error */
+					actx_error(actx, "unknown error");
+					goto error_return;
+				}
+
+				if (strcmp(err->error, "authorization_pending") != 0 &&
+					strcmp(err->error, "slow_down") != 0)
+				{
 					if (err->error_description)
 						appendPQExpBuffer(&actx->errbuf, "%s ",
 										  err->error_description);
 
 					appendPQExpBuffer(&actx->errbuf, "(%s)", err->error);
-
 					goto error_return;
 				}
 
@@ -1892,7 +1955,14 @@ pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
 				 */
 				if (strcmp(err->error, "slow_down") == 0)
 				{
-					actx->authz.interval += 5;	/* TODO check for overflow? */
+					int			prev_interval = actx->authz.interval;
+
+					actx->authz.interval += 5;
+					if (actx->authz.interval < prev_interval)
+					{
+						actx_error(actx, "slow_down interval overflow");
+						goto error_return;
+					}
 				}
 
 				/*
@@ -1959,21 +2029,8 @@ error_return:
 	else
 		appendPQExpBufferStr(&conn->errorMessage, actx->errbuf.data);
 
-	if (actx->curl_err[0])
-	{
-		size_t		len;
-
-		appendPQExpBuffer(&conn->errorMessage, " (%s)", actx->curl_err);
-
-		/* Sometimes libcurl adds a newline to the error buffer. :( */
-		len = conn->errorMessage.len;
-		if (len >= 2 && conn->errorMessage.data[len - 2] == '\n')
-		{
-			conn->errorMessage.data[len - 2] = ')';
-			conn->errorMessage.data[len - 1] = '\0';
-			conn->errorMessage.len--;
-		}
-	}
+	if (actx->curl_err.len > 0)
+		appendPQExpBuffer(&conn->errorMessage, " (%s)", actx->curl_err.data);
 
 	appendPQExpBufferStr(&conn->errorMessage, "\n");
 

@@ -1445,6 +1445,7 @@ AC_SUBST(LDAP_LIBS_BE)
 
 if test "$with_oauth" = curl ; then
   AC_CHECK_LIB(curl, curl_multi_init, [], [AC_MSG_ERROR([library 'curl' is required for --with-oauth=curl])])
+  PGAC_CHECK_LIBCURL
 fi
 
 # for contrib/sepgsql
