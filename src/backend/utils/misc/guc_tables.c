@@ -48,6 +48,7 @@
 #include "jit/jit.h"
 #include "libpq/auth.h"
 #include "libpq/libpq.h"
+#include "libpq/oauth.h"
 #include "libpq/scram.h"
 #include "nodes/queryjumble.h"
 #include "optimizer/cost.h"
@@ -494,6 +495,7 @@ extern const struct config_enum_entry dynamic_shared_memory_options[];
 /*
  * GUC option variables that are exported from this module
  */
+bool		AllowAlterSystem = true;
 bool		log_duration = false;
 bool		Debug_print_plan = false;
 bool		Debug_print_parse = false;
@@ -711,7 +713,7 @@ const char *const config_group_names[] =
 	[CLIENT_CONN_OTHER] = gettext_noop("Client Connection Defaults / Other Defaults"),
 	[LOCK_MANAGEMENT] = gettext_noop("Lock Management"),
 	[COMPAT_OPTIONS_PREVIOUS] = gettext_noop("Version and Platform Compatibility / Previous PostgreSQL Versions"),
-	[COMPAT_OPTIONS_CLIENT] = gettext_noop("Version and Platform Compatibility / Other Platforms and Clients"),
+	[COMPAT_OPTIONS_OTHER] = gettext_noop("Version and Platform Compatibility / Other Platforms and Clients"),
 	[ERROR_HANDLING_OPTIONS] = gettext_noop("Error Handling"),
 	[PRESET_OPTIONS] = gettext_noop("Preset Options"),
 	[CUSTOM_OPTIONS] = gettext_noop("Customized Options"),
@@ -1038,6 +1040,22 @@ struct config_bool ConfigureNamesBool[] =
 		},
 		&current_role_is_superuser,
 		false,
+		NULL, NULL, NULL
+	},
+	{
+		/*
+		 * This setting itself cannot be set by ALTER SYSTEM to avoid an
+		 * operator turning this setting off by using ALTER SYSTEM, without a
+		 * way to turn it back on.
+		 */
+		{"allow_alter_system", PGC_SIGHUP, COMPAT_OPTIONS_OTHER,
+			gettext_noop("Allows running the ALTER SYSTEM command."),
+			gettext_noop("Can be set to off for environments where global configuration "
+						 "changes should be made using a different method."),
+			GUC_DISALLOW_IN_AUTO_FILE
+		},
+		&AllowAlterSystem,
+		true,
 		NULL, NULL, NULL
 	},
 	{
@@ -1523,7 +1541,7 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
-		{"transform_null_equals", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+		{"transform_null_equals", PGC_USERSET, COMPAT_OPTIONS_OTHER,
 			gettext_noop("Treats \"expr=NULL\" as \"expr IS NULL\"."),
 			gettext_noop("When turned on, expressions of the form expr = NULL "
 						 "(or NULL = expr) are treated as expr IS NULL, that is, they "
@@ -4682,6 +4700,17 @@ struct config_string ConfigureNamesString[] =
 		&standby_slot_names,
 		"",
 		check_standby_slot_names, assign_standby_slot_names, NULL
+	},
+
+	{
+		{"oauth_validator_library", PGC_SIGHUP, CONN_AUTH_AUTH,
+			gettext_noop("Sets the library that will be called to validate OAuth v2 bearer tokens."),
+			NULL,
+			GUC_SUPERUSER_ONLY | GUC_NOT_IN_SAMPLE
+		},
+		&OAuthValidatorLibrary,
+		"",
+		NULL, NULL, NULL
 	},
 
 	/* End-of-list marker */
