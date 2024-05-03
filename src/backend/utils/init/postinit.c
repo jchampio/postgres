@@ -58,6 +58,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/guc_hooks.h"
+#include "utils/injection_point.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/portal.h"
@@ -714,6 +715,22 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 */
 	InitProcessPhase2();
 
+	/* Initialize status reporting */
+	pgstat_beinit();
+
+	/*
+	 * This is a convenient time to sketch in a partial pgstat entry. That
+	 * way, if LWLocks or third-party authentication should happen to hang,
+	 * the DBA will still be able to see what's going on.
+	 */
+	if (!bootstrap)
+	{
+		pgstat_bestart_initial();
+		pgstat_bestart_security();	/* fill in any SSL/GSS info too */
+
+		INJECTION_POINT("init-pre-auth");
+	}
+
 	/*
 	 * Initialize my entry in the shared-invalidation manager's array of
 	 * per-backend data.
@@ -782,9 +799,6 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	/* Initialize portal manager */
 	EnablePortalManager();
 
-	/* Initialize status reporting */
-	pgstat_beinit();
-
 	/*
 	 * Load relcache entries for the shared system catalogs.  This must create
 	 * at least entries for pg_database and catalogs used for authentication.
@@ -805,8 +819,8 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	/* The autovacuum launcher is done here */
 	if (AmAutoVacuumLauncherProcess())
 	{
-		/* report this backend in the PgBackendStatus array */
-		pgstat_bestart();
+		/* fill in the remainder of the PgBackendStatus array */
+		pgstat_bestart_final();
 
 		return;
 	}
@@ -882,6 +896,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	{
 		/* normal multiuser case */
 		Assert(MyProcPort != NULL);
+
 		PerformAuthentication(MyProcPort);
 		InitializeSessionUserId(username, useroid, false);
 		/* ensure that auth_method is actually valid, aka authn_id is not NULL */
@@ -889,6 +904,12 @@ InitPostgres(const char *in_dbname, Oid dboid,
 			InitializeSystemUser(MyClientConnectionInfo.authn_id,
 								 hba_authname(MyClientConnectionInfo.auth_method));
 		am_superuser = superuser();
+
+		/*
+		 * Authentication may have changed SSL/GSS details for the session, so
+		 * report it again.
+		 */
+		pgstat_bestart_security();
 	}
 
 	/*
@@ -961,8 +982,8 @@ InitPostgres(const char *in_dbname, Oid dboid,
 		/* initialize client encoding */
 		InitializeClientEncoding();
 
-		/* report this backend in the PgBackendStatus array */
-		pgstat_bestart();
+		/* fill in the remainder of the PgBackendStatus array */
+		pgstat_bestart_final();
 
 		/* close the transaction we started above */
 		CommitTransactionCommand();
@@ -1005,7 +1026,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
 		 */
 		if (!bootstrap)
 		{
-			pgstat_bestart();
+			pgstat_bestart_final();
 			CommitTransactionCommand();
 		}
 		return;
@@ -1205,9 +1226,9 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	if ((flags & INIT_PG_LOAD_SESSION_LIBS) != 0)
 		process_session_preload_libraries();
 
-	/* report this backend in the PgBackendStatus array */
+	/* fill in the remainder of the PgBackendStatus array */
 	if (!bootstrap)
-		pgstat_bestart();
+		pgstat_bestart_final();
 
 	/* close the transaction we started above */
 	if (!bootstrap)
