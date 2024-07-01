@@ -233,6 +233,7 @@ pgxs_deps = {
   'llvm': llvm,
   'lz4': lz4,
   'nls': libintl,
+  'oauth': oauth,
   'pam': pam,
   'perl': perl_dep,
   'python': python3_dep,

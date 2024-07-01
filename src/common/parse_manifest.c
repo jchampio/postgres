@@ -240,6 +240,8 @@ json_parse_manifest(JsonManifestParseContext *context, const char *buffer,
 
 	/* Create a JSON lexing context. */
 	lex = makeJsonLexContextCstringLen(NULL, buffer, size, PG_UTF8, true);
+	if (!lex)
+		json_manifest_parse_failure(context, "out of memory");
 
 	/* Set up semantic actions. */
 	sem.semstate = &parse;
