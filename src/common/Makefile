@@ -105,11 +105,11 @@ endif
 # libraries such as libpq to report errors directly.
 OBJS_FRONTEND_SHLIB = \
 	$(OBJS_COMMON) \
-	fe_memutils.o \
 	restricted_token.o \
 	sprompt.o
 OBJS_FRONTEND = \
 	$(OBJS_FRONTEND_SHLIB) \
+	fe_memutils.o \
 	logging.o
 
 # foo.o, foo_shlib.o, and foo_srv.o are all built from foo.c

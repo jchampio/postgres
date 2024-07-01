@@ -105,13 +105,13 @@ common_sources_cflags = {
 
 common_sources_frontend_shlib = common_sources
 common_sources_frontend_shlib += files(
-  'fe_memutils.c',
   'restricted_token.c',
   'sprompt.c',
 )
 
 common_sources_frontend_static = common_sources_frontend_shlib
 common_sources_frontend_static += files(
+  'fe_memutils.c',
   'logging.c',
 )
 
