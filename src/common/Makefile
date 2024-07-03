@@ -40,8 +40,8 @@ override CPPFLAGS += -DVAL_LDFLAGS_EX="\"$(LDFLAGS_EX)\""
 override CPPFLAGS += -DVAL_LDFLAGS_SL="\"$(LDFLAGS_SL)\""
 override CPPFLAGS += -DVAL_LIBS="\"$(LIBS)\""
 
-override CPPFLAGS := -DFRONTEND -I. -I$(top_srcdir)/src/common $(CPPFLAGS)
-LIBS += $(PTHREAD_LIBS)
+override CPPFLAGS := -DFRONTEND -I. -I$(top_srcdir)/src/common -I$(libpq_srcdir) $(CPPFLAGS)
+LIBS += $(PTHREAD_LIBS) $(libpq_pgport)
 
 OBJS_COMMON = \
 	archive.o \
@@ -105,11 +105,11 @@ endif
 # libraries such as libpq to report errors directly.
 OBJS_FRONTEND_SHLIB = \
 	$(OBJS_COMMON) \
-	fe_memutils.o \
 	restricted_token.o \
 	sprompt.o
 OBJS_FRONTEND = \
 	$(OBJS_FRONTEND_SHLIB) \
+	fe_memutils.o \
 	logging.o
 
 # foo.o, foo_shlib.o, and foo_srv.o are all built from foo.c

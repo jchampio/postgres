@@ -21,8 +21,64 @@
 #include "mb/pg_wchar.h"
 #include "port/pg_lfind.h"
 
-#ifndef FRONTEND
+#ifdef FRONTEND
+#include "pqexpbuffer.h"
+#else
+#include "lib/stringinfo.h"
 #include "miscadmin.h"
+#endif
+
+/*
+ * In backend, we will use palloc/pfree along with StringInfo.  In frontend,
+ * use malloc and PQExpBuffer, and return JSON_OUT_OF_MEMORY on out-of-memory.
+ */
+#ifdef FRONTEND
+
+#define STRDUP(s) strdup(s)
+#define ALLOC(size) malloc(size)
+#define ALLOC0(size) calloc(1, size)
+#define REALLOC realloc
+#define FREE(s) free(s)
+
+#define appendStrVal			appendPQExpBuffer
+#define appendBinaryStrVal		appendBinaryPQExpBuffer
+#define appendStrValChar		appendPQExpBufferChar
+/* XXX should we add a macro version to PQExpBuffer? */
+#define appendStrValCharMacro	appendPQExpBufferChar
+#define createStrVal			createPQExpBuffer
+#define initStrVal				initPQExpBuffer
+#define resetStrVal				resetPQExpBuffer
+#define termStrVal				termPQExpBuffer
+#define destroyStrVal			destroyPQExpBuffer
+
+#else							/* !FRONTEND */
+
+#define STRDUP(s) pstrdup(s)
+#define ALLOC(size) palloc(size)
+#define ALLOC0(size) palloc0(size)
+#define REALLOC repalloc
+
+/*
+ * Backend pfree() doesn't handle NULL pointers like the frontend's does; smooth
+ * that over to reduce mental gymnastics. Avoid multiple evaluation of the macro
+ * argument to avoid future hair-pulling.
+ */
+#define FREE(s) do {	\
+	void *__v = (s);	\
+	if (__v)			\
+		pfree(__v);		\
+} while (0)
+
+#define appendStrVal			appendStringInfo
+#define appendBinaryStrVal		appendBinaryStringInfo
+#define appendStrValChar		appendStringInfoChar
+#define appendStrValCharMacro	appendStringInfoCharMacro
+#define createStrVal			makeStringInfo
+#define initStrVal				initStringInfo
+#define resetStrVal				resetStringInfo
+#define termStrVal(s)			pfree((s)->data)
+#define destroyStrVal			destroyStringInfo
+
 #endif
 
 /*
@@ -103,7 +159,7 @@ struct JsonIncrementalState
 {
 	bool		is_last_chunk;
 	bool		partial_completed;
-	StringInfoData partial_token;
+	StrValType	partial_token;
 };
 
 /*
@@ -219,6 +275,7 @@ static JsonParseErrorType parse_object(JsonLexContext *lex, JsonSemAction *sem);
 static JsonParseErrorType parse_array_element(JsonLexContext *lex, JsonSemAction *sem);
 static JsonParseErrorType parse_array(JsonLexContext *lex, JsonSemAction *sem);
 static JsonParseErrorType report_parse_error(JsonParseContext ctx, JsonLexContext *lex);
+static bool allocate_incremental_state(JsonLexContext *lex);
 
 /* the null action object used for pure validation */
 JsonSemAction nullSemAction =
@@ -273,14 +330,10 @@ IsValidJsonNumber(const char *str, size_t len)
 {
 	bool		numeric_error;
 	size_t		total_len;
-	JsonLexContext dummy_lex;
+	JsonLexContext dummy_lex = {0};
 
 	if (len <= 0)
 		return false;
-
-	dummy_lex.incremental = false;
-	dummy_lex.inc_state = NULL;
-	dummy_lex.pstack = NULL;
 
 	/*
 	 * json_lex_number expects a leading  '-' to have been eaten already.
@@ -321,6 +374,9 @@ IsValidJsonNumber(const char *str, size_t len)
  * responsible for freeing the returned struct, either by calling
  * freeJsonLexContext() or (in backend environment) via memory context
  * cleanup.
+ *
+ * In frontend code this can return NULL on OOM, so callers must inspect the
+ * returned pointer.
  */
 JsonLexContext *
 makeJsonLexContextCstringLen(JsonLexContext *lex, const char *json,
@@ -328,7 +384,9 @@ makeJsonLexContextCstringLen(JsonLexContext *lex, const char *json,
 {
 	if (lex == NULL)
 	{
-		lex = palloc0(sizeof(JsonLexContext));
+		lex = ALLOC0(sizeof(JsonLexContext));
+		if (!lex)
+			return NULL;
 		lex->flags |= JSONLEX_FREE_STRUCT;
 	}
 	else
@@ -341,11 +399,68 @@ makeJsonLexContextCstringLen(JsonLexContext *lex, const char *json,
 	lex->input_encoding = encoding;
 	if (need_escapes)
 	{
-		lex->strval = makeStringInfo();
+		/*
+		 * This call can fail in FRONTEND code. We defer error handling to
+		 * time of use (json_lex_string()) since we might not need to parse
+		 * any strings anyway.
+		 */
+		lex->strval = createStrVal();
 		lex->flags |= JSONLEX_FREE_STRVAL;
+		lex->parse_strval = true;
 	}
 
 	return lex;
+}
+
+/*
+ * Allocates the internal bookkeeping structures for incremental parsing. This
+ * can only fail in-band with FRONTEND code.
+ */
+#define JS_STACK_CHUNK_SIZE 64
+#define JS_MAX_PROD_LEN 10		/* more than we need */
+#define JSON_TD_MAX_STACK 6400	/* hard coded for now - this is a REALLY high
+								 * number */
+static bool
+allocate_incremental_state(JsonLexContext *lex)
+{
+	void	   *pstack,
+			   *prediction,
+			   *fnames,
+			   *fnull;
+
+	lex->inc_state = ALLOC0(sizeof(JsonIncrementalState));
+	pstack = ALLOC(sizeof(JsonParserStack));
+	prediction = ALLOC(JS_STACK_CHUNK_SIZE * JS_MAX_PROD_LEN);
+	fnames = ALLOC(JS_STACK_CHUNK_SIZE * sizeof(char *));
+	fnull = ALLOC(JS_STACK_CHUNK_SIZE * sizeof(bool));
+
+#ifdef FRONTEND
+	if (!lex->inc_state
+		|| !pstack
+		|| !prediction
+		|| !fnames
+		|| !fnull)
+	{
+		FREE(lex->inc_state);
+		FREE(pstack);
+		FREE(prediction);
+		FREE(fnames);
+		FREE(fnull);
+
+		return false;
+	}
+#endif
+
+	initStrVal(&(lex->inc_state->partial_token));
+	lex->pstack = pstack;
+	lex->pstack->stack_size = JS_STACK_CHUNK_SIZE;
+	lex->pstack->prediction = prediction;
+	lex->pstack->pred_index = 0;
+	lex->pstack->fnames = fnames;
+	lex->pstack->fnull = fnull;
+
+	lex->incremental = true;
+	return true;
 }
 
 
@@ -357,19 +472,20 @@ makeJsonLexContextCstringLen(JsonLexContext *lex, const char *json,
  * we don't need the input, that will be handed in bit by bit to the
  * parse routine. We also need an accumulator for partial tokens in case
  * the boundary between chunks happens to fall in the middle of a token.
+ *
+ * In frontend code this can return NULL on OOM, so callers must inspect the
+ * returned pointer.
  */
-#define JS_STACK_CHUNK_SIZE 64
-#define JS_MAX_PROD_LEN 10		/* more than we need */
-#define JSON_TD_MAX_STACK 6400	/* hard coded for now - this is a REALLY high
-								 * number */
-
 JsonLexContext *
 makeJsonLexContextIncremental(JsonLexContext *lex, int encoding,
 							  bool need_escapes)
 {
 	if (lex == NULL)
 	{
-		lex = palloc0(sizeof(JsonLexContext));
+		lex = ALLOC0(sizeof(JsonLexContext));
+		if (!lex)
+			return NULL;
+
 		lex->flags |= JSONLEX_FREE_STRUCT;
 	}
 	else
@@ -377,42 +493,60 @@ makeJsonLexContextIncremental(JsonLexContext *lex, int encoding,
 
 	lex->line_number = 1;
 	lex->input_encoding = encoding;
-	lex->incremental = true;
-	lex->inc_state = palloc0(sizeof(JsonIncrementalState));
-	initStringInfo(&(lex->inc_state->partial_token));
-	lex->pstack = palloc(sizeof(JsonParserStack));
-	lex->pstack->stack_size = JS_STACK_CHUNK_SIZE;
-	lex->pstack->prediction = palloc(JS_STACK_CHUNK_SIZE * JS_MAX_PROD_LEN);
-	lex->pstack->pred_index = 0;
-	lex->pstack->fnames = palloc(JS_STACK_CHUNK_SIZE * sizeof(char *));
-	lex->pstack->fnull = palloc(JS_STACK_CHUNK_SIZE * sizeof(bool));
+
+	if (!allocate_incremental_state(lex))
+	{
+		if (lex->flags & JSONLEX_FREE_STRUCT)
+			FREE(lex);
+		return NULL;
+	}
+
 	if (need_escapes)
 	{
-		lex->strval = makeStringInfo();
+		/*
+		 * This call can fail in FRONTEND code. We defer error handling to
+		 * time of use (json_lex_string()) since we might not need to parse
+		 * any strings anyway.
+		 */
+		lex->strval = createStrVal();
 		lex->flags |= JSONLEX_FREE_STRVAL;
+		lex->parse_strval = true;
 	}
+
 	return lex;
 }
 
-static inline void
+static inline bool
 inc_lex_level(JsonLexContext *lex)
 {
-	lex->lex_level += 1;
-
-	if (lex->incremental && lex->lex_level >= lex->pstack->stack_size)
+	if (lex->incremental && (lex->lex_level + 1) >= lex->pstack->stack_size)
 	{
-		lex->pstack->stack_size += JS_STACK_CHUNK_SIZE;
-		lex->pstack->prediction =
-			repalloc(lex->pstack->prediction,
-					 lex->pstack->stack_size * JS_MAX_PROD_LEN);
-		if (lex->pstack->fnames)
-			lex->pstack->fnames =
-				repalloc(lex->pstack->fnames,
-						 lex->pstack->stack_size * sizeof(char *));
-		if (lex->pstack->fnull)
-			lex->pstack->fnull =
-				repalloc(lex->pstack->fnull, lex->pstack->stack_size * sizeof(bool));
+		size_t		new_stack_size;
+		char	   *new_prediction;
+		char	  **new_fnames;
+		bool	   *new_fnull;
+
+		new_stack_size = lex->pstack->stack_size + JS_STACK_CHUNK_SIZE;
+
+		new_prediction = REALLOC(lex->pstack->prediction,
+								 new_stack_size * JS_MAX_PROD_LEN);
+		new_fnames = REALLOC(lex->pstack->fnames,
+							 new_stack_size * sizeof(char *));
+		new_fnull = REALLOC(lex->pstack->fnull, new_stack_size * sizeof(bool));
+
+#ifdef FRONTEND
+		if (!new_prediction || !new_fnames || !new_fnull)
+			return false;
+#endif
+
+		lex->pstack->stack_size = new_stack_size;
+		lex->pstack->prediction = new_prediction;
+		lex->pstack->fnames = new_fnames;
+		lex->pstack->fnull = new_fnull;
 	}
+
+	lex->lex_level += 1;
+	return true;
 }
 
 static inline void
@@ -482,24 +616,31 @@ get_fnull(JsonLexContext *lex)
 void
 freeJsonLexContext(JsonLexContext *lex)
 {
+	static const JsonLexContext empty = {0};
+
+	if (!lex)
+		return;
+
 	if (lex->flags & JSONLEX_FREE_STRVAL)
-		destroyStringInfo(lex->strval);
+		destroyStrVal(lex->strval);
 
 	if (lex->errormsg)
-		destroyStringInfo(lex->errormsg);
+		destroyStrVal(lex->errormsg);
 
 	if (lex->incremental)
 	{
-		pfree(lex->inc_state->partial_token.data);
-		pfree(lex->inc_state);
-		pfree(lex->pstack->prediction);
-		pfree(lex->pstack->fnames);
-		pfree(lex->pstack->fnull);
-		pfree(lex->pstack);
+		termStrVal(&lex->inc_state->partial_token);
+		FREE(lex->inc_state);
+		FREE(lex->pstack->prediction);
+		FREE(lex->pstack->fnames);
+		FREE(lex->pstack->fnull);
+		FREE(lex->pstack);
 	}
 
 	if (lex->flags & JSONLEX_FREE_STRUCT)
-		pfree(lex);
+		FREE(lex);
+	else
+		*lex = empty;
 }
 
 /*
@@ -522,22 +663,13 @@ JsonParseErrorType
 pg_parse_json(JsonLexContext *lex, JsonSemAction *sem)
 {
 #ifdef FORCE_JSON_PSTACK
-
-	lex->incremental = true;
-	lex->inc_state = palloc0(sizeof(JsonIncrementalState));
-
 	/*
 	 * We don't need partial token processing, there is only one chunk. But we
 	 * still need to init the partial token string so that freeJsonLexContext
-	 * works.
+	 * works, so perform the full incremental initialization.
 	 */
-	initStringInfo(&(lex->inc_state->partial_token));
-	lex->pstack = palloc(sizeof(JsonParserStack));
-	lex->pstack->stack_size = JS_STACK_CHUNK_SIZE;
-	lex->pstack->prediction = palloc(JS_STACK_CHUNK_SIZE * JS_MAX_PROD_LEN);
-	lex->pstack->pred_index = 0;
-	lex->pstack->fnames = palloc(JS_STACK_CHUNK_SIZE * sizeof(char *));
-	lex->pstack->fnull = palloc(JS_STACK_CHUNK_SIZE * sizeof(bool));
+	if (!allocate_incremental_state(lex))
+		return JSON_OUT_OF_MEMORY;
 
 	return pg_parse_json_incremental(lex, sem, lex->input, lex->input_length, true);
 
@@ -597,7 +729,7 @@ json_count_array_elements(JsonLexContext *lex, int *elements)
 	 * etc, so doing this with a copy makes that safe.
 	 */
 	memcpy(&copylex, lex, sizeof(JsonLexContext));
-	copylex.strval = NULL;		/* not interested in values here */
+	copylex.parse_strval = false;	/* not interested in values here */
 	copylex.lex_level++;
 
 	count = 0;
@@ -737,7 +869,9 @@ pg_parse_json_incremental(JsonLexContext *lex,
 							if (result != JSON_SUCCESS)
 								return result;
 						}
-						inc_lex_level(lex);
+
+						if (!inc_lex_level(lex))
+							return JSON_OUT_OF_MEMORY;
 					}
 					break;
 				case JSON_SEM_OEND:
@@ -766,7 +900,9 @@ pg_parse_json_incremental(JsonLexContext *lex,
 							if (result != JSON_SUCCESS)
 								return result;
 						}
-						inc_lex_level(lex);
+
+						if (!inc_lex_level(lex))
+							return JSON_OUT_OF_MEMORY;
 					}
 					break;
 				case JSON_SEM_AEND:
@@ -793,9 +929,11 @@ pg_parse_json_incremental(JsonLexContext *lex,
 						json_ofield_action ostart = sem->object_field_start;
 						json_ofield_action oend = sem->object_field_end;
 
-						if ((ostart != NULL || oend != NULL) && lex->strval != NULL)
+						if ((ostart != NULL || oend != NULL) && lex->parse_strval)
 						{
-							fname = pstrdup(lex->strval->data);
+							fname = STRDUP(lex->strval->data);
+							if (fname == NULL)
+								return JSON_OUT_OF_MEMORY;
 						}
 						set_fname(lex, fname);
 					}
@@ -883,14 +1021,21 @@ pg_parse_json_incremental(JsonLexContext *lex,
 							 */
 							if (tok == JSON_TOKEN_STRING)
 							{
-								if (lex->strval != NULL)
-									pstack->scalar_val = pstrdup(lex->strval->data);
+								if (lex->parse_strval)
+								{
+									pstack->scalar_val = STRDUP(lex->strval->data);
+									if (pstack->scalar_val == NULL)
+										return JSON_OUT_OF_MEMORY;
+								}
 							}
 							else
 							{
 								ptrdiff_t	tlen = (lex->token_terminator - lex->token_start);
 
-								pstack->scalar_val = palloc(tlen + 1);
+								pstack->scalar_val = ALLOC(tlen + 1);
+								if (pstack->scalar_val == NULL)
+									return JSON_OUT_OF_MEMORY;
+
 								memcpy(pstack->scalar_val, lex->token_start, tlen);
 								pstack->scalar_val[tlen] = '\0';
 							}
@@ -1025,14 +1170,21 @@ parse_scalar(JsonLexContext *lex, JsonSemAction *sem)
 	/* extract the de-escaped string value, or the raw lexeme */
 	if (lex_peek(lex) == JSON_TOKEN_STRING)
 	{
-		if (lex->strval != NULL)
-			val = pstrdup(lex->strval->data);
+		if (lex->parse_strval)
+		{
+			val = STRDUP(lex->strval->data);
+			if (val == NULL)
+				return JSON_OUT_OF_MEMORY;
+		}
 	}
 	else
 	{
 		int			len = (lex->token_terminator - lex->token_start);
 
-		val = palloc(len + 1);
+		val = ALLOC(len + 1);
+		if (val == NULL)
+			return JSON_OUT_OF_MEMORY;
+
 		memcpy(val, lex->token_start, len);
 		val[len] = '\0';
 	}
@@ -1066,8 +1218,12 @@ parse_object_field(JsonLexContext *lex, JsonSemAction *sem)
 
 	if (lex_peek(lex) != JSON_TOKEN_STRING)
 		return report_parse_error(JSON_PARSE_STRING, lex);
-	if ((ostart != NULL || oend != NULL) && lex->strval != NULL)
-		fname = pstrdup(lex->strval->data);
+	if ((ostart != NULL || oend != NULL) && lex->parse_strval)
+	{
+		fname = STRDUP(lex->strval->data);
+		if (fname == NULL)
+			return JSON_OUT_OF_MEMORY;
+	}
 	result = json_lex(lex);
 	if (result != JSON_SUCCESS)
 		return result;
@@ -1123,6 +1279,11 @@ parse_object(JsonLexContext *lex, JsonSemAction *sem)
 	JsonParseErrorType result;
 
 #ifndef FRONTEND
+
+	/*
+	 * TODO: clients need some way to put a bound on stack growth. Parse level
+	 * limits maybe?
+	 */
 	check_stack_depth();
 #endif
 
@@ -1312,15 +1473,24 @@ json_lex(JsonLexContext *lex)
 	const char *const end = lex->input + lex->input_length;
 	JsonParseErrorType result;
 
-	if (lex->incremental && lex->inc_state->partial_completed)
+	if (lex->incremental)
 	{
-		/*
-		 * We just lexed a completed partial token on the last call, so reset
-		 * everything
-		 */
-		resetStringInfo(&(lex->inc_state->partial_token));
-		lex->token_terminator = lex->input;
-		lex->inc_state->partial_completed = false;
+		if (lex->inc_state->partial_completed)
+		{
+			/*
+			 * We just lexed a completed partial token on the last call, so
+			 * reset everything
+			 */
+			resetStrVal(&(lex->inc_state->partial_token));
+			lex->token_terminator = lex->input;
+			lex->inc_state->partial_completed = false;
+		}
+
+#ifdef FRONTEND
+		/* Make sure our partial token buffer is valid before using it below. */
+		if (PQExpBufferDataBroken(lex->inc_state->partial_token))
+			return JSON_OUT_OF_MEMORY;
+#endif
 	}
 
 	s = lex->token_terminator;
@@ -1331,7 +1501,7 @@ json_lex(JsonLexContext *lex)
 		 * We have a partial token. Extend it and if completed lex it by a
 		 * recursive call
 		 */
-		StringInfo	ptok = &(lex->inc_state->partial_token);
+		StrValType *ptok = &(lex->inc_state->partial_token);
 		size_t		added = 0;
 		bool		tok_done = false;
 		JsonLexContext dummy_lex;
@@ -1358,7 +1528,7 @@ json_lex(JsonLexContext *lex)
 			{
 				char		c = lex->input[i];
 
-				appendStringInfoCharMacro(ptok, c);
+				appendStrValCharMacro(ptok, c);
 				added++;
 				if (c == '"' && escapes % 2 == 0)
 				{
@@ -1403,7 +1573,7 @@ json_lex(JsonLexContext *lex)
 						case '8':
 						case '9':
 							{
-								appendStringInfoCharMacro(ptok, cc);
+								appendStrValCharMacro(ptok, cc);
 								added++;
 							}
 							break;
@@ -1424,7 +1594,7 @@ json_lex(JsonLexContext *lex)
 
 				if (JSON_ALPHANUMERIC_CHAR(cc))
 				{
-					appendStringInfoCharMacro(ptok, cc);
+					appendStrValCharMacro(ptok, cc);
 					added++;
 				}
 				else
@@ -1467,6 +1637,7 @@ json_lex(JsonLexContext *lex)
 		dummy_lex.input_length = ptok->len;
 		dummy_lex.input_encoding = lex->input_encoding;
 		dummy_lex.incremental = false;
+		dummy_lex.parse_strval = lex->parse_strval;
 		dummy_lex.strval = lex->strval;
 
 		partial_result = json_lex(&dummy_lex);
@@ -1622,8 +1793,8 @@ json_lex(JsonLexContext *lex)
 					if (lex->incremental && !lex->inc_state->is_last_chunk &&
 						p == lex->input + lex->input_length)
 					{
-						appendBinaryStringInfo(
-											   &(lex->inc_state->partial_token), s, end - s);
+						appendBinaryStrVal(
+										   &(lex->inc_state->partial_token), s, end - s);
 						return JSON_INCOMPLETE;
 					}
 
@@ -1680,8 +1851,8 @@ json_lex_string(JsonLexContext *lex)
 	do { \
 		if (lex->incremental && !lex->inc_state->is_last_chunk) \
 		{ \
-			appendBinaryStringInfo(&lex->inc_state->partial_token, \
-								   lex->token_start, end - lex->token_start); \
+			appendBinaryStrVal(&lex->inc_state->partial_token, \
+							   lex->token_start, end - lex->token_start); \
 			return JSON_INCOMPLETE; \
 		} \
 		lex->token_terminator = s; \
@@ -1694,8 +1865,15 @@ json_lex_string(JsonLexContext *lex)
 		return code; \
 	} while (0)
 
-	if (lex->strval != NULL)
-		resetStringInfo(lex->strval);
+	if (lex->parse_strval)
+	{
+#ifdef FRONTEND
+		/* make sure initialization succeeded */
+		if (lex->strval == NULL)
+			return JSON_OUT_OF_MEMORY;
+#endif
+		resetStrVal(lex->strval);
+	}
 
 	Assert(lex->input_length > 0);
 	s = lex->token_start;
@@ -1732,7 +1910,7 @@ json_lex_string(JsonLexContext *lex)
 					else
 						FAIL_AT_CHAR_END(JSON_UNICODE_ESCAPE_FORMAT);
 				}
-				if (lex->strval != NULL)
+				if (lex->parse_strval)
 				{
 					/*
 					 * Combine surrogate pairs.
@@ -1789,19 +1967,19 @@ json_lex_string(JsonLexContext *lex)
 
 						unicode_to_utf8(ch, (unsigned char *) utf8str);
 						utf8len = pg_utf_mblen((unsigned char *) utf8str);
-						appendBinaryStringInfo(lex->strval, utf8str, utf8len);
+						appendBinaryPQExpBuffer(lex->strval, utf8str, utf8len);
 					}
 					else if (ch <= 0x007f)
 					{
 						/* The ASCII range is the same in all encodings */
-						appendStringInfoChar(lex->strval, (char) ch);
+						appendPQExpBufferChar(lex->strval, (char) ch);
 					}
 					else
 						FAIL_AT_CHAR_END(JSON_UNICODE_HIGH_ESCAPE);
 #endif							/* FRONTEND */
 				}
 			}
-			else if (lex->strval != NULL)
+			else if (lex->parse_strval)
 			{
 				if (hi_surrogate != -1)
 					FAIL_AT_CHAR_END(JSON_UNICODE_LOW_SURROGATE);
@@ -1811,22 +1989,22 @@ json_lex_string(JsonLexContext *lex)
 					case '"':
 					case '\\':
 					case '/':
-						appendStringInfoChar(lex->strval, *s);
+						appendStrValChar(lex->strval, *s);
 						break;
 					case 'b':
-						appendStringInfoChar(lex->strval, '\b');
+						appendStrValChar(lex->strval, '\b');
 						break;
 					case 'f':
-						appendStringInfoChar(lex->strval, '\f');
+						appendStrValChar(lex->strval, '\f');
 						break;
 					case 'n':
-						appendStringInfoChar(lex->strval, '\n');
+						appendStrValChar(lex->strval, '\n');
 						break;
 					case 'r':
-						appendStringInfoChar(lex->strval, '\r');
+						appendStrValChar(lex->strval, '\r');
 						break;
 					case 't':
-						appendStringInfoChar(lex->strval, '\t');
+						appendStrValChar(lex->strval, '\t');
 						break;
 					default:
 
@@ -1861,7 +2039,7 @@ json_lex_string(JsonLexContext *lex)
 
 			/*
 			 * Skip to the first byte that requires special handling, so we
-			 * can batch calls to appendBinaryStringInfo.
+			 * can batch calls to appendBinaryStrVal.
 			 */
 			while (p < end - sizeof(Vector8) &&
 				   !pg_lfind8('\\', (uint8 *) p, sizeof(Vector8)) &&
@@ -1885,8 +2063,8 @@ json_lex_string(JsonLexContext *lex)
 				}
 			}
 
-			if (lex->strval != NULL)
-				appendBinaryStringInfo(lex->strval, s, p - s);
+			if (lex->parse_strval)
+				appendBinaryStrVal(lex->strval, s, p - s);
 
 			/*
 			 * s will be incremented at the top of the loop, so set it to just
@@ -1901,6 +2079,11 @@ json_lex_string(JsonLexContext *lex)
 		lex->token_terminator = s + 1;
 		return JSON_UNICODE_LOW_SURROGATE;
 	}
+
+#ifdef FRONTEND
+	if (lex->parse_strval && PQExpBufferBroken(lex->strval))
+		return JSON_OUT_OF_MEMORY;
+#endif
 
 	/* Hooray, we found the end of the string! */
 	lex->prev_token_terminator = lex->token_terminator;
@@ -2019,8 +2202,8 @@ json_lex_number(JsonLexContext *lex, const char *s,
 	if (lex->incremental && !lex->inc_state->is_last_chunk &&
 		len >= lex->input_length)
 	{
-		appendBinaryStringInfo(&lex->inc_state->partial_token,
-							   lex->token_start, s - lex->token_start);
+		appendBinaryStrVal(&lex->inc_state->partial_token,
+						   lex->token_start, s - lex->token_start);
 		if (num_err != NULL)
 			*num_err = error;
 
@@ -2096,19 +2279,25 @@ report_parse_error(JsonParseContext ctx, JsonLexContext *lex)
 char *
 json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 {
+	if (error == JSON_OUT_OF_MEMORY)
+	{
+		/* Short circuit. Allocating anything for this case is unhelpful. */
+		return _("out of memory");
+	}
+
 	if (lex->errormsg)
-		resetStringInfo(lex->errormsg);
+		resetStrVal(lex->errormsg);
 	else
-		lex->errormsg = makeStringInfo();
+		lex->errormsg = createStrVal();
 
 	/*
 	 * A helper for error messages that should print the current token. The
 	 * format must contain exactly one %.*s specifier.
 	 */
 #define json_token_error(lex, format) \
-	appendStringInfo((lex)->errormsg, _(format), \
-					 (int) ((lex)->token_terminator - (lex)->token_start), \
-					 (lex)->token_start);
+	appendStrVal((lex)->errormsg, _(format), \
+				 (int) ((lex)->token_terminator - (lex)->token_start), \
+				 (lex)->token_start);
 
 	switch (error)
 	{
@@ -2127,9 +2316,9 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 			json_token_error(lex, "Escape sequence \"\\%.*s\" is invalid.");
 			break;
 		case JSON_ESCAPING_REQUIRED:
-			appendStringInfo(lex->errormsg,
-							 _("Character with value 0x%02x must be escaped."),
-							 (unsigned char) *(lex->token_terminator));
+			appendStrVal(lex->errormsg,
+						 _("Character with value 0x%02x must be escaped."),
+						 (unsigned char) *(lex->token_terminator));
 			break;
 		case JSON_EXPECTED_END:
 			json_token_error(lex, "Expected end of input, but found \"%.*s\".");
@@ -2159,6 +2348,9 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 			break;
 		case JSON_INVALID_TOKEN:
 			json_token_error(lex, "Token \"%.*s\" is invalid.");
+			break;
+		case JSON_OUT_OF_MEMORY:
+			/* should have been handled above; use the error path */
 			break;
 		case JSON_UNICODE_CODE_POINT_ZERO:
 			return _("\\u0000 cannot be converted to text.");
@@ -2191,15 +2383,23 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 	}
 #undef json_token_error
 
-	/*
-	 * We don't use a default: case, so that the compiler will warn about
-	 * unhandled enum values.  But this needs to be here anyway to cover the
-	 * possibility of an incorrect input.
-	 */
-	if (lex->errormsg->len == 0)
-		appendStringInfo(lex->errormsg,
-						 "unexpected json parse error type: %d",
-						 (int) error);
+	/* Note that lex->errormsg can be NULL in FRONTEND code. */
+	if (lex->errormsg && lex->errormsg->len == 0)
+	{
+		/*
+		 * We don't use a default: case, so that the compiler will warn about
+		 * unhandled enum values.  But this needs to be here anyway to cover
+		 * the possibility of an incorrect input.
+		 */
+		appendStrVal(lex->errormsg,
+					 "unexpected json parse error type: %d",
+					 (int) error);
+	}
+
+#ifdef FRONTEND
+	if (PQExpBufferBroken(lex->errormsg))
+		return _("out of memory while constructing error description");
+#endif
 
 	return lex->errormsg->data;
 }
