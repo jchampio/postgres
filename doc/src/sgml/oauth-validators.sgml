@@ -1,0 +1,9 @@
+<!-- doc/src/sgml/oauth-validators.sgml -->
+
+<chapter id="oauth-validators">
+ <title>Implementing OAuth Validator Modules</title>
+
+ <para>
+  TODO
+ </para>
+</chapter>
