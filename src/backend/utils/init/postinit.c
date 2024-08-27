@@ -58,6 +58,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/guc_hooks.h"
+#include "utils/injection_point.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/portal.h"
@@ -845,6 +846,16 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	{
 		/* normal multiuser case */
 		Assert(MyProcPort != NULL);
+
+		/*
+		 * Authentication can take a while, during which time we're holding a
+		 * transaction open. Fill in enough of a backend status so that DBAs can
+		 * observe what's going on. (The later call to pgstat_bestart() will
+		 * fill in the rest of the status after we've authenticated.)
+		 */
+		pgstat_bestart_pre_auth();
+		INJECTION_POINT("init-pre-auth");
+
 		PerformAuthentication(MyProcPort);
 		InitializeSessionUserId(username, useroid, false);
 		/* ensure that auth_method is actually valid, aka authn_id is not NULL */
