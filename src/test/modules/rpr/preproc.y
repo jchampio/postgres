@@ -423,7 +423,7 @@ make3_str(char *str1, char *str2, char *str3)
  %left JOIN CROSS LEFT FULL RIGHT INNER_P NATURAL
 
 %%
-prog: row_pattern;
+prog: row_pattern								{ parsed = $1; };
 
 row_pattern:
 			row_pattern_term						{ $$ = $1; }

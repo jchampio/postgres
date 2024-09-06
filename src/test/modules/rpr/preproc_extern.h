@@ -206,4 +206,6 @@ typedef struct RowPatternQuantifier
 	bool		reluctant;
 } RowPatternQuantifier;
 
+extern List *parsed;
+
 #endif							/* _ECPG_PREPROC_EXTERN_H */

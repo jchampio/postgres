@@ -24,6 +24,7 @@ List *
 list_make1(void *datum)
 {
 	List	   *list = palloc(sizeof(List));
+	list->type = T_List;
 	list->node = (Node *) datum;
 	list->next = NIL;
 	list->last = list;
@@ -66,5 +67,8 @@ int			ret_value;
 
 int main()
 {
+	lex_init();
+	base_yyparse();
+
 	return 0;
 }
