@@ -68,6 +68,12 @@ int			ret_value;
 static void
 pretty_print(Node *parsed)
 {
+	if (!parsed)
+	{
+		printf("( )");
+		return;
+	}
+
 	switch (parsed->type)
 	{
 		case T_List:
