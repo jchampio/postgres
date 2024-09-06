@@ -5,8 +5,8 @@ rpr_prefer_sources = files(
   'rpr_prefer.c',
 )
 
-rpr_grammar = custom_target('gram',
-  input: 'gram.y',
+rpr_grammar = custom_target('preproc',
+  input: 'preproc.y',
   kwargs: bison_kw,
 )
 generated_sources += rpr_grammar.to_list()
@@ -15,7 +15,7 @@ rpr_prefer_sources += rpr_grammar
 rpr_scanner = custom_target('scan',
   input: 'scan.l',
   output: 'scan.c',
-  command: [flex_cmd, '--no-backup', '--fix-warnings', '--', '-CF', '-p', '-p'],
+  command: [flex_cmd, '--fix-warnings', '--', '-CF', '-p', '-p'],
 )
 generated_sources += rpr_scanner
 rpr_prefer_sources += rpr_scanner
