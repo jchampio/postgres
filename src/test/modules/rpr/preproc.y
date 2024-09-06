@@ -530,8 +530,8 @@ opt_iconst:
 
 row_pattern_primary:
 			ColId									{ $$ = (Node *) makeString($1); }
-			| '$'									{ $$ = NULL; }
-			| '^'									{ $$ = NULL; }
+			| '$'									{ $$ = (Node *) makeString("$"); }
+			| '^'									{ $$ = (Node *) makeString("^"); }
 			| '(' opt_row_pattern ')'				{ $$ = (Node *) $2; }
 			| LEFT_BRACE_MINUS row_pattern RIGHT_MINUS_BRACE { $$ = (Node *) $2; }
 		;
