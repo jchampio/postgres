@@ -24,22 +24,10 @@
 #include <ctype.h>
 #include <limits.h>
 
-#include "access/tableam.h"
-#include "catalog/index.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_am.h"
-#include "catalog/pg_trigger.h"
-#include "commands/defrem.h"
-#include "commands/trigger.h"
 #include "gramparse.h"
-#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parser.h"
-#include "storage/lmgr.h"
-#include "utils/date.h"
-#include "utils/datetime.h"
 #include "utils/numeric.h"
-#include "utils/xml.h"
 
 
 /*
@@ -348,10 +336,6 @@ static Node *makeIntConst(int val, int location);
 
 /*
  *	The target production for the whole parse.
- *
- * Ordinarily we parse a list of statements, but if we see one of the
- * special MODE_XXX symbols as first token, we parse something else.
- * The options here correspond to enum RawParseMode, which see for details.
  */
 parse_toplevel:
 			row_pattern
@@ -467,7 +451,7 @@ row_pattern_primary:
 
 opt_row_pattern:
 			row_pattern								{ $$ = $1; }
-			| /* EMPTY */							{ $$ = NULL; }
+			| /* EMPTY */							{ $$ = NIL; }
 		;
 
 /*****************************************************************************
@@ -946,6 +930,15 @@ makeIntConst(int val, int location)
 	n->location = location;
 
    return (Node *) n;
+}
+
+String *
+makeString(char *str)
+{
+	String	   *v = makeNode(String);
+
+	v->sval = str;
+	return v;
 }
 
 /* parser_init()

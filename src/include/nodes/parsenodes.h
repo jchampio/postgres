@@ -4300,4 +4300,19 @@ typedef struct DropSubscriptionStmt
 	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
 } DropSubscriptionStmt;
 
+typedef struct RowPatternFactor
+{
+	NodeTag		type;
+	Node	   *primary;
+	Node	   *quantifier;
+} RowPatternFactor;
+
+typedef struct RowPatternQuantifier
+{
+	NodeTag		type;
+	A_Const	   *min;
+	A_Const	   *max;
+	bool		reluctant;
+} RowPatternQuantifier;
+
 #endif							/* PARSENODES_H */

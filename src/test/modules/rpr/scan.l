@@ -95,9 +95,6 @@ static void addunicode(pg_wchar c, yyscan_t yyscanner);
 
 #define lexer_errposition()  scanner_errposition(*(yylloc), yyscanner)
 
-static void check_string_escape_warning(unsigned char ychar, core_yyscan_t yyscanner);
-static void check_escape_warning(core_yyscan_t yyscanner);
-
 /*
  * Work around a bug in flex 2.5.35: it emits a couple of functions that
  * it forgets to emit declarations for.  Since we use -Wmissing-prototypes,
@@ -311,6 +308,8 @@ identifier		{ident_start}{ident_cont}*
 typecast		"::"
 dot_dot			\.\.
 colon_equals	":="
+left_brace_minus	"{-"
+right_minus_brace	"-}"
 
 /*
  * These operator-like tokens (unlike the above ones) also match the {operator}
@@ -601,13 +600,6 @@ other			.
 <xe>{xeunicode} {
 					pg_wchar	c = strtoul(yytext + 2, NULL, 16);
 
-					/*
-					 * For consistency with other productions, issue any
-					 * escape warning with cursor pointing to start of string.
-					 * We might want to change that, someday.
-					 */
-					check_escape_warning(yyscanner);
-
 					/* Remember start of overall string token ... */
 					PUSH_YYLLOC();
 					/* ... and set the error cursor to point at this esc seq */
@@ -674,14 +666,12 @@ other			.
 									 errhint("Use '' to write quotes in strings. \\' is insecure in client-only encodings."),
 									 lexer_errposition()));
 					}
-					check_string_escape_warning(yytext[1], yyscanner);
 					addlitchar(unescape_single_char(yytext[1], yyscanner),
 							   yyscanner);
 				}
 <xe>{xeoctesc}  {
 					unsigned char c = strtoul(yytext + 1, NULL, 8);
 
-					check_escape_warning(yyscanner);
 					addlitchar(c, yyscanner);
 					if (c == '\0' || IS_HIGHBIT_SET(c))
 						yyextra->saw_non_ascii = true;
@@ -689,7 +679,6 @@ other			.
 <xe>{xehexesc}  {
 					unsigned char c = strtoul(yytext + 2, NULL, 16);
 
-					check_escape_warning(yyscanner);
 					addlitchar(c, yyscanner);
 					if (c == '\0' || IS_HIGHBIT_SET(c))
 						yyextra->saw_non_ascii = true;
@@ -808,6 +797,16 @@ other			.
 {colon_equals}	{
 					SET_YYLLOC();
 					return COLON_EQUALS;
+				}
+
+{left_brace_minus} {
+					SET_YYLLOC();
+					return LEFT_BRACE_MINUS;
+				}
+
+{right_minus_brace} {
+					SET_YYLLOC();
+					return RIGHT_MINUS_BRACE;
 				}
 
 {equals_greater} {
@@ -1110,6 +1109,8 @@ other			.
 int
 scanner_errposition(int location, core_yyscan_t yyscanner)
 {
+	/* TODO */
+#if 0
 	int			pos;
 
 	if (location < 0)
@@ -1118,7 +1119,10 @@ scanner_errposition(int location, core_yyscan_t yyscanner)
 	/* Convert byte offset to character number */
 	pos = pg_mbstrlen_with_len(yyextra->scanbuf, location) + 1;
 	/* And pass it to the ereport mechanism */
-	return errposition(pos);
+	/*return errposition(pos);*/
+#endif
+
+	return 0;
 }
 
 /*
@@ -1332,11 +1336,12 @@ litbufdup(core_yyscan_t yyscanner)
 static int
 process_integer_literal(const char *token, YYSTYPE *lval, int base)
 {
-	ErrorSaveContext escontext = {T_ErrorSaveContext};
 	int32		val;
+	char	   *end;
 
-	val = pg_strtoint32_safe(token, (Node *) &escontext);
-	if (escontext.error_occurred)
+	errno = 0;
+	val = strtol(token, &end, base);
+	if (errno || *end != '\0')
 	{
 		/* integer too large (or contains decimal pt), treat it as a float */
 		lval->str = pstrdup(token);
@@ -1389,43 +1394,4 @@ unescape_single_char(unsigned char c, core_yyscan_t yyscanner)
 
 			return c;
 	}
-}
-
-static void
-check_string_escape_warning(unsigned char ychar, core_yyscan_t yyscanner)
-{
-	if (ychar == '\'')
-	{
-		if (yyextra->warn_on_first_escape && yyextra->escape_string_warning)
-			ereport(WARNING,
-					(errcode(ERRCODE_NONSTANDARD_USE_OF_ESCAPE_CHARACTER),
-					 errmsg("nonstandard use of \\' in a string literal"),
-					 errhint("Use '' to write quotes in strings, or use the escape string syntax (E'...')."),
-					 lexer_errposition()));
-		yyextra->warn_on_first_escape = false;	/* warn only once per string */
-	}
-	else if (ychar == '\\')
-	{
-		if (yyextra->warn_on_first_escape && yyextra->escape_string_warning)
-			ereport(WARNING,
-					(errcode(ERRCODE_NONSTANDARD_USE_OF_ESCAPE_CHARACTER),
-					 errmsg("nonstandard use of \\\\ in a string literal"),
-					 errhint("Use the escape string syntax for backslashes, e.g., E'\\\\'."),
-					 lexer_errposition()));
-		yyextra->warn_on_first_escape = false;	/* warn only once per string */
-	}
-	else
-		check_escape_warning(yyscanner);
-}
-
-static void
-check_escape_warning(core_yyscan_t yyscanner)
-{
-	if (yyextra->warn_on_first_escape && yyextra->escape_string_warning)
-		ereport(WARNING,
-				(errcode(ERRCODE_NONSTANDARD_USE_OF_ESCAPE_CHARACTER),
-				 errmsg("nonstandard use of escape in a string literal"),
-		errhint("Use the escape string syntax for escapes, e.g., E'\\r\\n'."),
-				 lexer_errposition()));
-	yyextra->warn_on_first_escape = false;		/* warn only once per string */
 }

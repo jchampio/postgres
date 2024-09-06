@@ -1,6 +1,7 @@
 # Copyright (c) 2024, PostgreSQL Global Development Group
 
 rpr_prefer_sources = files(
+  'parser.c',
   'rpr_prefer.c',
 )
 
@@ -28,6 +29,7 @@ endif
 
 rpr_prefer = executable('rpr_prefer',
   rpr_prefer_sources,
+  c_args: ['-DFRONTEND'],
   dependencies: [frontend_code],
   include_directories: include_directories('.'),
   kwargs: default_bin_args + {
