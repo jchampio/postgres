@@ -141,6 +141,7 @@ typedef enum NodeTag
 	T_String,
 	T_RowPatternFactor,
 	T_RowPatternQuantifier,
+	T_RowPatternAlternation,
 } NodeTag;
 
 typedef struct Node
@@ -205,6 +206,13 @@ typedef struct RowPatternQuantifier
 	A_Const	   *max;
 	bool		reluctant;
 } RowPatternQuantifier;
+
+typedef struct RowPatternAlternation
+{
+	NodeTag		type;
+	List	   *left;
+	List	   *right;
+} RowPatternAlternation;
 
 extern List *parsed;
 

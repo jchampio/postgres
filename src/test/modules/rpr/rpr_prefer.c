@@ -84,6 +84,15 @@ pretty_print(Node *parsed)
 
 			break;
 
+		case T_RowPatternAlternation:
+			RowPatternAlternation *a = (RowPatternAlternation *) parsed;
+
+			pretty_print((Node *) a->left);
+			printf(" | ");
+			pretty_print((Node *) a->right);
+
+			break;
+
 		case T_String:
 			String *s = (String *) parsed;
 			printf("%s", s->sval);
@@ -112,9 +121,11 @@ int
 main()
 {
 	lex_init();
-	base_yyparse();
+	if (base_yyparse())
+		return 1;
 
 	pretty_print((Node *) parsed);
+	printf("\n");
 
 	return 0;
 }

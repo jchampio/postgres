@@ -436,7 +436,14 @@ row_pattern_term:
 		;
 
 row_pattern_alternation:
-			row_pattern '|' row_pattern_term		{ $$ = NULL; }
+			row_pattern '|' row_pattern_term
+				{
+					RowPatternAlternation *a = makeNode(RowPatternAlternation);
+					a->left = $1;
+					a->right = $3;
+
+					$$ = (Node *) a;
+				}
 		;
 
 row_pattern_factor:
