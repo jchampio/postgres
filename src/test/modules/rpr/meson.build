@@ -4,6 +4,21 @@ rpr_prefer_sources = files(
   'rpr_prefer.c',
 )
 
+rpr_grammar = custom_target('gram',
+  input: 'gram.y',
+  kwargs: bison_kw,
+)
+generated_sources += rpr_grammar.to_list()
+rpr_prefer_sources += rpr_grammar
+
+rpr_scanner = custom_target('scan',
+  input: 'scan.l',
+  output: 'scan.c',
+  command: [flex_cmd, '--no-backup', '--fix-warnings', '--', '-CF', '-p', '-p'],
+)
+generated_sources += rpr_scanner
+rpr_prefer_sources += rpr_scanner
+
 if host_system == 'windows'
   rpr_prefer_sources += rc_bin_gen.process(win32ver_rc, extra_args: [
     '--NAME', 'rpr_prefer',
@@ -13,6 +28,8 @@ endif
 
 rpr_prefer = executable('rpr_prefer',
   rpr_prefer_sources,
+  dependencies: [frontend_code],
+  include_directories: include_directories('.'),
   kwargs: default_bin_args + {
     'install': false,
   },
