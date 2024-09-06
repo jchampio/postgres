@@ -444,7 +444,7 @@ row_pattern_factor:
 				{
 					RowPatternFactor *f = makeNode(RowPatternFactor);
 					f->primary = $1;
-					f->quantifier = $2;
+					f->quantifier = (RowPatternQuantifier *) $2;
 
 					$$ = (Node *) f;
 				}

@@ -195,7 +195,7 @@ typedef struct RowPatternFactor
 {
 	NodeTag		type;
 	Node	   *primary;
-	Node	   *quantifier;
+	struct RowPatternQuantifier *quantifier;
 } RowPatternFactor;
 
 typedef struct RowPatternQuantifier

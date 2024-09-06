@@ -65,10 +65,56 @@ makeString(char *str)
 
 int			ret_value;
 
-int main()
+static void
+pretty_print(Node *parsed)
+{
+	switch (parsed->type)
+	{
+		case T_List:
+			List *l = (List *) parsed;
+
+			printf("( ");
+			while (l)
+			{
+				pretty_print(l->node);
+				l = l->next;
+				printf(" ");
+			}
+			printf(")");
+
+			break;
+
+		case T_String:
+			String *s = (String *) parsed;
+			printf("%s", s->sval);
+			break;
+
+		case T_RowPatternFactor:
+			RowPatternFactor *f = (RowPatternFactor *) parsed;
+			pretty_print(f->primary);
+
+			printf("{");
+			if (f->quantifier->min)
+				printf("%d", f->quantifier->min->val.ival.ival);
+			printf(",");
+			if (f->quantifier->max)
+				printf("%d", f->quantifier->max->val.ival.ival);
+			printf("}");
+
+			break;
+
+		default:
+			mmfatal(ET_ERROR, "unknown type %d", parsed->type);
+	}
+}
+
+int
+main()
 {
 	lex_init();
 	base_yyparse();
+
+	pretty_print((Node *) parsed);
 
 	return 0;
 }
