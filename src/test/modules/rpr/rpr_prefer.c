@@ -245,9 +245,8 @@ parenthesized_language(Node *n)
 		case T_RowPatternFactor:
 			RowPatternFactor *f = (RowPatternFactor *) n;
 
-			if (f->quantifier->min && intValue(f->quantifier->min) != 1)
-				mmfatal(ET_ERROR, "quantifiers other than 1 not yet supported");
-			if (f->quantifier->max && intValue(f->quantifier->max) != 1)
+			if ((!f->quantifier->min || intValue(f->quantifier->min) != 1)
+				|| (!f->quantifier->max || intValue(f->quantifier->max) != 1))
 				mmfatal(ET_ERROR, "quantifiers other than 1 not yet supported");
 
 			result = parenthesized_language(f->primary);
