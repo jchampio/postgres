@@ -251,19 +251,23 @@ parenthesized_language(Node *n)
 
 			while (left)
 			{
-				str = list_copy((List *) left->node);
+				str = list_make1(makeString("("));
+				str = list_concat(str, (List *) left->node);
 				str = lappend(str, makeString("-"));
-				result = lappend(result, str);
+				str = lappend(str, makeString(")"));
 
+				result = lappend(result, str);
 				left = left->next;
 			}
 
 			while (right)
 			{
-				str = list_make1(makeString("-"));
+				str = list_make1(makeString("("));
+				str = lappend(str, makeString("-"));
 				str = list_concat(str, list_copy((List *) right->node));
-				result = lappend(result, str);
+				str = lappend(str, makeString(")"));
 
+				result = lappend(result, str);
 				right = right->next;
 			}
 
