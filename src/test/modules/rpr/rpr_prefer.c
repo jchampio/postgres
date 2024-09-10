@@ -216,10 +216,12 @@ parenthesized_language(Node *n)
 			{
 				PL		   *acc = NIL;
 				PL		   *left = result;
-				PL		   *right = parenthesized_language(l->node);
+				PL		   *pl = parenthesized_language(l->node);
 
 				while (left)
 				{
+					PL		   *right = pl;
+
 					while (right)
 					{
 						IDStr	   *row = NIL;
@@ -238,6 +240,31 @@ parenthesized_language(Node *n)
 
 				result = acc;
 				l = l->next;
+			}
+
+			break;
+
+		case T_RowPatternAlternation:
+			RowPatternAlternation *a = (RowPatternAlternation *) n;
+			PL		   *left = parenthesized_language((Node *) a->left);
+			PL		   *right = parenthesized_language((Node *) a->right);
+
+			while (left)
+			{
+				str = list_copy((List *) left->node);
+				str = lappend(str, makeString("-"));
+				result = lappend(result, str);
+
+				left = left->next;
+			}
+
+			while (right)
+			{
+				str = list_make1(makeString("-"));
+				str = list_concat(str, list_copy((List *) right->node));
+				result = lappend(result, str);
+
+				right = right->next;
 			}
 
 			break;
