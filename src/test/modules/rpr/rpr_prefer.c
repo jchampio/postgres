@@ -159,7 +159,6 @@ pretty_print(Node *parsed)
 	}
 }
 
-#if 0
 static bool
 has_variable(List *id_str)
 {
@@ -182,7 +181,153 @@ has_variable(List *id_str)
 
 	return false;
 }
-#endif
+
+static void
+expand_worker(PL **result, IDStr *prefix, PL *terms, int remaining, bool reluctant)
+{
+	if (remaining == 0)
+	{
+		/*
+		 * Base case. Expand the provided prefix with terms, allowing the
+		 * final term to be empty.
+		 */
+		for (PL *q = terms; q; q = q->next)
+		{
+			IDStr	   *qs = (IDStr *) q->node;
+			IDStr	   *paren;
+
+			paren = list_make1(makeString("("));
+			paren = list_concat(paren, list_copy(prefix));
+			paren = list_concat(paren, list_copy(qs));
+			paren = lappend(paren, makeString(")"));
+
+			*result = lappend(*result, paren);
+		}
+
+		return;
+	}
+
+	/*
+	 * Order here depends on whether the quantifier is greedy or reluctant --
+	 * for the greedy case, superstrings sort before their substrings, and
+	 * vice-versa for the reluctant case. Crucially, this is not the same as
+	 * sorting by length, which is why it's implemented recursively.
+	 */
+
+	for (PL *q = terms; q; q = q->next)
+	{
+		IDStr	   *qs = (IDStr *) q->node;
+		IDStr	   *new;
+		IDStr	   *paren;
+
+		new = list_copy(prefix);
+		new = list_concat(new, list_copy(qs));
+
+		paren = list_make1(makeString("("));
+		paren = list_concat(paren, list_copy(new));
+		paren = lappend(paren, makeString(")"));
+
+		if (reluctant)
+			*result = lappend(*result, paren);
+
+		/*
+		 * Empty matches may not appear in the middle of the identifier string;
+		 * skip expansion unless the term had a variable.
+		 */
+		if (has_variable(qs))
+			expand_worker(result, new, terms, remaining - 1, reluctant);
+
+		if (!reluctant)
+			*result = lappend(*result, paren);
+	}
+}
+
+static PL *
+expand_factor(PL *primary, RowPatternQuantifier *quant)
+{
+	PL		   *result = NIL;
+	PL		   *prefixes;
+	int			min = 0;
+	int			max;
+	int			expansions;
+
+	if (!quant->max)
+		mmfatal(ET_ERROR, "infinite quantifiers not yet supported");
+
+	if (quant->min)
+		min = intValue(quant->min);
+	if (quant->max)
+		max = intValue(quant->max);
+
+	if (max == 0)
+		mmfatal(ET_ERROR, "maximum must be greater than zero");
+	if (max < min)
+		mmfatal(ET_ERROR, "maximum may not be less than minimum");
+
+	/*
+	 * Build the "prefix" set. All identifier strings that are returned must
+	 * start with one of these. The list is generated in preferment order.
+	 *
+	 * By rule, an empty match -- a string that cannot advance the state
+	 * machine, for which has_variable() will return false -- may only appear
+	 * in the prefix set before the `min` index, or at the `max` index.
+	 *
+	 * For min of 0 or 1, our only prefix is the empty set.
+	 */
+	prefixes = list_make1(NIL);
+
+	for (int i = 1; i < min; i++)
+	{
+		PL		   *acc = NIL;
+
+		for (PL *p = prefixes; p; p = p->next)
+		{
+			for (PL *q = primary; q; q = q->next)
+			{
+				IDStr	   *ps = (IDStr *) p->node;
+				IDStr	   *qs = (IDStr *) q->node;
+				IDStr	   *new;
+
+				new = list_copy(ps);
+				new = list_concat(new, qs);
+
+				acc = lappend(acc, new);
+			}
+		}
+
+		prefixes = acc;
+	}
+
+	/* Now build the full PL. */
+	expansions = max - min;
+	if (min == 0)
+		expansions--; /* we handle the empty set case explicitly */
+
+	for (PL *p = prefixes; p; p = p->next)
+	{
+		IDStr	   *ps = (IDStr *) p->node;
+
+		if (min == 0 && quant->reluctant)
+		{
+			IDStr	   *empty = list_make1(makeString("("));
+			empty = lappend(empty, makeString(")"));
+
+			result = lappend(result, empty);
+		}
+
+		expand_worker(&result, ps, primary, expansions, quant->reluctant);
+
+		if (min == 0 && !quant->reluctant)
+		{
+			IDStr	   *empty = list_make1(makeString("("));
+			empty = lappend(empty, makeString(")"));
+
+			result = lappend(result, empty);
+		}
+	}
+
+	return result;
+}
 
 static PL *
 parenthesized_language(Node *n)
@@ -276,11 +421,14 @@ parenthesized_language(Node *n)
 		case T_RowPatternFactor:
 			RowPatternFactor *f = (RowPatternFactor *) n;
 
-			if ((!f->quantifier->min || intValue(f->quantifier->min) != 1)
-				|| (!f->quantifier->max || intValue(f->quantifier->max) != 1))
-				mmfatal(ET_ERROR, "quantifiers other than 1 not yet supported");
-
 			result = parenthesized_language(f->primary);
+
+			if (!f->quantifier->min
+				|| intValue(f->quantifier->min) != 1
+				|| !f->quantifier->max
+				|| intValue(f->quantifier->max) != 1)
+				result = expand_factor(result, f->quantifier);
+
 			break;
 
 		default:
