@@ -65,7 +65,6 @@ static int	state_before_str_stop;
 %}
 
 %option 8bit
-%option never-interactive
 %option nodefault
 %option noinput
 %option nounput
