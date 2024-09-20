@@ -57,7 +57,7 @@ static void addlitchar(unsigned char ychar);
 static int	process_integer_literal(const char *token, YYSTYPE *lval, int base);
 
 char	   *token_start;
-List	   *parsed;
+Node	   *parsed_pattern;
 
 /* vars to keep track of start conditions when scanning literals */
 static int	state_before_str_start;

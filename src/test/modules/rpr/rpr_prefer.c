@@ -534,7 +534,7 @@ main(int argc, char *argv[])
 	if (base_yyparse())
 		return 1;
 
-	pl = parenthesized_language((Node *) parsed, max_rows);
+	pl = parenthesized_language(parsed_pattern, max_rows);
 	for (; pl; pl = pl->next)
 	{
 		IDStr	   *id_str = (List *) pl->node;

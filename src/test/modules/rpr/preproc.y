@@ -193,8 +193,8 @@ make3_str(char *str1, char *str2, char *str3)
 %type <str> ECPGKeywords_vanames
 %type <str> ECPGunreserved_interval
 
-%type <list>	row_pattern row_pattern_term opt_row_pattern
-%type <node>	row_pattern_alternation row_pattern_factor row_pattern_primary
+%type <node>	row_pattern opt_row_pattern row_pattern_term
+				row_pattern_alternation row_pattern_factor row_pattern_primary
 				opt_quantifier opt_iconst
 %type <boolean>	opt_reluctant
 
@@ -423,16 +423,26 @@ make3_str(char *str1, char *str2, char *str3)
  %left JOIN CROSS LEFT FULL RIGHT INNER_P NATURAL
 
 %%
-prog: row_pattern								{ parsed = $1; };
+prog: row_pattern								{ parsed_pattern = $1; };
 
 row_pattern:
 			row_pattern_term						{ $$ = $1; }
-			| row_pattern_alternation				{ $$ = list_make1($1); }
+			| row_pattern_alternation				{ $$ = $1; }
 		;
 
 row_pattern_term:
-			row_pattern_factor						{ $$ = list_make1($1); }
-			| row_pattern_term row_pattern_factor	{ $$ = lappend($1, $2); }
+			row_pattern_factor						{ $$ = $1; }
+			| row_pattern_term row_pattern_factor
+				{
+					List *l;
+
+					if ($1 && $1->type == T_List)
+						l = (List *) $1;
+					else
+						l = list_make1($1);
+
+					$$ = (Node *) lappend(l, $2);
+				}
 		;
 
 row_pattern_alternation:
@@ -530,7 +540,7 @@ row_pattern_primary:
 
 opt_row_pattern:
 			row_pattern								{ $$ = $1; }
-			| /* EMPTY */							{ $$ = NIL; }
+			| /* EMPTY */							{ $$ = NULL; }
 		;
 
 

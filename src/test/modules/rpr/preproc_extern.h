@@ -210,10 +210,10 @@ typedef struct RowPatternQuantifier
 typedef struct RowPatternAlternation
 {
 	NodeTag		type;
-	List	   *left;
-	List	   *right;
+	Node	   *left;
+	Node	   *right;
 } RowPatternAlternation;
 
-extern List *parsed;
+extern Node *parsed_pattern;
 
 #endif							/* _ECPG_PREPROC_EXTERN_H */
