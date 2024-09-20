@@ -384,13 +384,7 @@ parenthesized_language(Node *n, int max_rows)
 	IDStr	   *str = NIL;
 
 	if (!n)
-	{
-		str = lappend(str, makeString("("));
-		str = lappend(str, makeString(")"));
-		result = lappend(result, str);
-
-		return result;
-	}
+		return list_make1(NIL);
 
 	switch (n->type)
 	{
@@ -403,9 +397,9 @@ parenthesized_language(Node *n, int max_rows)
 			List	   *l = (List *) n;
 
 			result = parenthesized_language(l->node, max_rows);
-			l = l->next;
 
-			while (l)
+			l = l->next;
+			if (l)
 			{
 				PL		   *acc = NIL;
 				PL		   *left = result;
@@ -432,7 +426,25 @@ parenthesized_language(Node *n, int max_rows)
 				}
 
 				result = acc;
-				l = l->next;
+				Assert(!l->next);
+			}
+			else
+			{
+				PL		   *acc = NIL;
+
+				for (PL *p = result; p; p = p->next)
+				{
+					IDStr	   *s = (IDStr *) p->node;
+					IDStr	   *row = NIL;
+
+					row = lappend(row, makeString("("));
+					row = list_concat(row, list_copy(s));
+					row = lappend(row, makeString(")"));
+
+					acc = lappend(acc, row);
+				}
+
+				result = acc;
 			}
 
 			break;

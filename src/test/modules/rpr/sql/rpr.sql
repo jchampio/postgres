@@ -10,4 +10,7 @@
 \! rpr_prefer a??
 \! rpr_prefer a{0,1}?
 
+-- Parenthesization.
+\! rpr_prefer "(a?)"
+
 \! rpr_prefer "a b"

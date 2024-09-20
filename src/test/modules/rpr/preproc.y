@@ -434,13 +434,7 @@ row_pattern_term:
 			row_pattern_factor						{ $$ = $1; }
 			| row_pattern_term row_pattern_factor
 				{
-					List *l;
-
-					if ($1 && $1->type == T_List)
-						l = (List *) $1;
-					else
-						l = list_make1($1);
-
+					List *l = list_make1($1);
 					$$ = (Node *) lappend(l, $2);
 				}
 		;
@@ -539,8 +533,8 @@ row_pattern_primary:
 			ColId									{ $$ = (Node *) makeString($1); }
 			| '$'									{ $$ = (Node *) makeString("$"); }
 			| '^'									{ $$ = (Node *) makeString("^"); }
-			| '(' opt_row_pattern ')'				{ $$ = (Node *) $2; }
-			| LEFT_BRACE_MINUS row_pattern RIGHT_MINUS_BRACE { $$ = (Node *) $2; }
+			| '(' opt_row_pattern ')'				{ $$ = (Node *) list_make1($2); }
+			| LEFT_BRACE_MINUS row_pattern RIGHT_MINUS_BRACE { $$ = $2; }
 		;
 
 opt_row_pattern:

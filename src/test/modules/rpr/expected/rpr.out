@@ -20,5 +20,9 @@ $
 \! rpr_prefer a{0,1}?
 ( ) 
 ( a ) 
+-- Parenthesization.
+\! rpr_prefer "(a?)"
+( ( a ) ) 
+( ( ) ) 
 \! rpr_prefer "a b"
 ( a b ) 
