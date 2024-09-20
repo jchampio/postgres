@@ -148,13 +148,16 @@ pretty_print(Node *parsed)
 			RowPatternFactor *f = (RowPatternFactor *) parsed;
 			pretty_print(f->primary);
 
-			printf("{");
-			if (f->quantifier->min)
-				printf("%d", f->quantifier->min->val.ival.ival);
-			printf(",");
-			if (f->quantifier->max)
-				printf("%d", f->quantifier->max->val.ival.ival);
-			printf("}");
+			if (f->quantifier)
+			{
+				printf("{");
+				if (f->quantifier->min)
+					printf("%d", f->quantifier->min->val.ival.ival);
+				printf(",");
+				if (f->quantifier->max)
+					printf("%d", f->quantifier->max->val.ival.ival);
+				printf("}");
+			}
 
 			break;
 
@@ -470,11 +473,7 @@ parenthesized_language(Node *n, int max_rows)
 			RowPatternFactor *f = (RowPatternFactor *) n;
 
 			result = parenthesized_language(f->primary, max_rows);
-
-			if (!f->quantifier->min
-				|| intValue(f->quantifier->min) != 1
-				|| !f->quantifier->max
-				|| intValue(f->quantifier->max) != 1)
+			if (f->quantifier)
 				result = expand_factor(result, f->quantifier, max_rows);
 
 			break;

@@ -507,15 +507,7 @@ opt_quantifier:
 
 					$$ = (Node *) q;
 				}
-			| /* EMPTY */
-				{
-					RowPatternQuantifier *q = makeNode(RowPatternQuantifier);
-					q->min = (A_Const *) makeIntConst(1, -1);
-					q->max = (A_Const *) makeIntConst(1, -1);
-					q->reluctant = false;
-
-					$$ = (Node *) q;
-				}
+			| /* EMPTY */							{ $$ = NULL; }
 		;
 
 opt_reluctant:
