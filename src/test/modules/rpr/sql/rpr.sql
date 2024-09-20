@@ -1,4 +1,13 @@
+-- Singleton sets.
 \! rpr_prefer a
+\! rpr_prefer $
+\! rpr_prefer ^
+\! rpr_prefer "()"
+
+-- Question mark quantifier (greedy and reluctant) and its verbose equivalent.
 \! rpr_prefer a?
+\! rpr_prefer a{0,1}
 \! rpr_prefer a??
+\! rpr_prefer a{0,1}?
+
 \! rpr_prefer "a b"
