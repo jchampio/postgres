@@ -3,6 +3,7 @@ PGFILEDESC = "SQL/RPR preferment test program"
 PGAPPICON = win32
 
 TAP_TESTS = 1
+REGRESS = rpr
 
 OBJS = rpr_prefer.o $(WIN32RES)
 

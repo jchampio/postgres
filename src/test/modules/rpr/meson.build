@@ -44,4 +44,9 @@ tests += {
   'tap': {
     'tests': [],
   },
+  'regress': {
+    'sql': [
+      'rpr',
+    ],
+  },
 }

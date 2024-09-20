@@ -21,6 +21,9 @@
 
 #include "preproc_extern.h"
 
+/* Kept for calling during a debugger session. */
+void pretty_print(Node *parsed);
+
 typedef List PL;
 typedef List IDStr;
 
@@ -102,7 +105,7 @@ makeString(char *str)
 
 int			ret_value;
 
-static void
+void
 pretty_print(Node *parsed)
 {
 	if (!parsed)
@@ -483,6 +486,13 @@ parenthesized_language(Node *n, int max_rows)
 	return result;
 }
 
+static void
+usage_and_exit(int ec)
+{
+	fprintf(stderr, "usage: rpr_prefer [--max-rows M] [PATTERN]\n");
+	exit(ec);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -490,6 +500,7 @@ main(int argc, char *argv[])
 
 	int			max_rows = -1;
 	int			c;
+	char	   *cmdl_pattern = NULL;
 	static const struct option opts[] =
 	{
 		{ "max-rows", required_argument, 0, 'm' },
@@ -505,17 +516,24 @@ main(int argc, char *argv[])
 				break;
 
 			default:
-				fprintf(stderr, "usage: %s [--max-rows M]\n", argv[0]);
-				exit(1);
+				usage_and_exit(1);
 		}
 	}
 
-	lex_init();
+	if (optind < argc - 1)
+	{
+		/* Too many non-option arguments. */
+		usage_and_exit(1);
+	}
+	else if (optind == argc - 1)
+	{
+		/* Pattern given on the command line. */
+		cmdl_pattern = argv[optind];
+	}
+
+	lex_init(cmdl_pattern);
 	if (base_yyparse())
 		return 1;
-
-	pretty_print((Node *) parsed);
-	printf("\n\n");
 
 	pl = parenthesized_language((Node *) parsed, max_rows);
 	for (; pl; pl = pl->next)

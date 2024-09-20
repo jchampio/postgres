@@ -68,7 +68,7 @@ enum errortype
 
 /* functions */
 
-extern void lex_init(void);
+extern void lex_init(char *input);
 extern void output_line_number(void);
 extern void output_prepare_statement(char *name, char *stmt);
 extern void output_deallocate_prepare_statement(char *name);

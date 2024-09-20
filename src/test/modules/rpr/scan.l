@@ -936,7 +936,7 @@ other			.
 /* LCOV_EXCL_STOP */
 
 void
-lex_init(void)
+lex_init(char *input)
 {
 	braces_open = 0;
 	parenths_open = 0;
@@ -951,6 +951,9 @@ lex_init(void)
 		literalbuf = (char *) mm_alloc(literalalloc);
 	}
 	startlit();
+
+	if (input)
+		yy_scan_string(input);
 
 	BEGIN(SQL);
 }
