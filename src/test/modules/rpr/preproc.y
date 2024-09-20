@@ -459,11 +459,16 @@ row_pattern_alternation:
 row_pattern_factor:
 			row_pattern_primary opt_quantifier
 				{
-					RowPatternFactor *f = makeNode(RowPatternFactor);
-					f->primary = $1;
-					f->quantifier = (RowPatternQuantifier *) $2;
+					if ($2)
+					{
+						RowPatternFactor *f = makeNode(RowPatternFactor);
+						f->primary = $1;
+						f->quantifier = (RowPatternQuantifier *) $2;
 
-					$$ = (Node *) f;
+						$$ = (Node *) f;
+					}
+					else
+						$$ = $1;
 				}
 		;
 
