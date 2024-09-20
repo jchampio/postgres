@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include <ctype.h>
+#include <getopt_long.h>
 #include <limits.h>
 
 #include "preproc_extern.h"
@@ -159,12 +160,33 @@ pretty_print(Node *parsed)
 	}
 }
 
-static bool
-has_variable(List *id_str)
-{
-	static const char *special_symbols = "()[]$^-";
+static const char *special_symbols = "()[]$^-";
 
-	while (id_str)
+static int
+num_variables(IDStr *id_str)
+{
+	int			count = 0;
+
+	for (; id_str; id_str = id_str->next)
+	{
+		String	   *s = (String *) id_str->node;
+		const char *str = s->sval;
+
+		Assert(s->type == T_String);
+
+		if (strlen(str) != 1)
+			count++;
+		else if (!strchr(special_symbols, str[0]))
+			count++;
+	}
+
+	return count;
+}
+
+static bool
+has_variable(IDStr *id_str)
+{
+	for (; id_str; id_str = id_str->next)
 	{
 		String	   *s = (String *) id_str->node;
 		const char *str = s->sval;
@@ -175,15 +197,13 @@ has_variable(List *id_str)
 			return true;
 		if (!strchr(special_symbols, str[0]))
 			return true;
-
-		id_str = id_str->next;
 	}
 
 	return false;
 }
 
 static void
-expand_worker(PL **result, IDStr *prefix, PL *terms, int remaining, bool reluctant)
+expand_worker(PL **result, IDStr *prefix, PL *terms, int remaining, bool reluctant, int max_rows)
 {
 	if (remaining == 0)
 	{
@@ -235,7 +255,17 @@ expand_worker(PL **result, IDStr *prefix, PL *terms, int remaining, bool relucta
 		 * skip expansion unless the term had a variable.
 		 */
 		if (has_variable(qs))
-			expand_worker(result, new, terms, remaining - 1, reluctant);
+		{
+			if (max_rows >= 0)
+			{
+				int			var_count = num_variables(new);
+
+				if (var_count > max_rows)
+					continue; /* impossible to match */
+			}
+
+			expand_worker(result, new, terms, remaining - 1, reluctant, max_rows);
+		}
 
 		if (!reluctant)
 			*result = lappend(*result, paren);
@@ -243,26 +273,28 @@ expand_worker(PL **result, IDStr *prefix, PL *terms, int remaining, bool relucta
 }
 
 static PL *
-expand_factor(PL *primary, RowPatternQuantifier *quant)
+expand_factor(PL *primary, RowPatternQuantifier *quant, int max_rows)
 {
 	PL		   *result = NIL;
 	PL		   *prefixes;
 	int			min = 0;
-	int			max;
+	int			max = 0;
 	int			expansions;
 
-	if (!quant->max)
-		mmfatal(ET_ERROR, "infinite quantifiers not yet supported");
+	if (!quant->max && max_rows == -1)
+		mmfatal(ET_ERROR, "infinite quantifiers not supported without --max-rows");
 
 	if (quant->min)
 		min = intValue(quant->min);
 	if (quant->max)
+	{
 		max = intValue(quant->max);
 
-	if (max == 0)
-		mmfatal(ET_ERROR, "maximum must be greater than zero");
-	if (max < min)
-		mmfatal(ET_ERROR, "maximum may not be less than minimum");
+		if (max == 0)
+			mmfatal(ET_ERROR, "maximum must be greater than zero");
+		if (max < min)
+			mmfatal(ET_ERROR, "maximum may not be less than minimum");
+	}
 
 	/*
 	 * Build the "prefix" set. All identifier strings that are returned must
@@ -299,38 +331,51 @@ expand_factor(PL *primary, RowPatternQuantifier *quant)
 	}
 
 	/* Now build the full PL. */
-	expansions = max - min;
-	if (min == 0)
-		expansions--; /* we handle the empty set case explicitly */
+	if (max)
+	{
+		expansions = max - min;
+		if (min == 0)
+			expansions--; /* we handle the empty set case explicitly */
+	}
+
+	if (min == 0 && quant->reluctant)
+	{
+		IDStr	   *empty = list_make1(makeString("("));
+		empty = lappend(empty, makeString(")"));
+
+		result = lappend(result, empty);
+	}
 
 	for (PL *p = prefixes; p; p = p->next)
 	{
 		IDStr	   *ps = (IDStr *) p->node;
 
-		if (min == 0 && quant->reluctant)
+		if (max)
+			expand_worker(&result, ps, primary, expansions, quant->reluctant, max_rows);
+		else
 		{
-			IDStr	   *empty = list_make1(makeString("("));
-			empty = lappend(empty, makeString(")"));
+			int			var_count = num_variables(ps);
 
-			result = lappend(result, empty);
+			if (var_count > max_rows)
+				continue; /* impossible to match */
+
+			expand_worker(&result, ps, primary, max_rows - var_count, quant->reluctant, max_rows);
 		}
+	}
 
-		expand_worker(&result, ps, primary, expansions, quant->reluctant);
+	if (min == 0 && !quant->reluctant)
+	{
+		IDStr	   *empty = list_make1(makeString("("));
+		empty = lappend(empty, makeString(")"));
 
-		if (min == 0 && !quant->reluctant)
-		{
-			IDStr	   *empty = list_make1(makeString("("));
-			empty = lappend(empty, makeString(")"));
-
-			result = lappend(result, empty);
-		}
+		result = lappend(result, empty);
 	}
 
 	return result;
 }
 
 static PL *
-parenthesized_language(Node *n)
+parenthesized_language(Node *n, int max_rows)
 {
 	PL		   *result = NIL;
 	IDStr	   *str = NIL;
@@ -354,14 +399,14 @@ parenthesized_language(Node *n)
 		case T_List:
 			List	   *l = (List *) n;
 
-			result = parenthesized_language(l->node);
+			result = parenthesized_language(l->node, max_rows);
 			l = l->next;
 
 			while (l)
 			{
 				PL		   *acc = NIL;
 				PL		   *left = result;
-				PL		   *pl = parenthesized_language(l->node);
+				PL		   *pl = parenthesized_language(l->node, max_rows);
 
 				while (left)
 				{
@@ -391,8 +436,8 @@ parenthesized_language(Node *n)
 
 		case T_RowPatternAlternation:
 			RowPatternAlternation *a = (RowPatternAlternation *) n;
-			PL		   *left = parenthesized_language((Node *) a->left);
-			PL		   *right = parenthesized_language((Node *) a->right);
+			PL		   *left = parenthesized_language((Node *) a->left, max_rows);
+			PL		   *right = parenthesized_language((Node *) a->right, max_rows);
 
 			while (left)
 			{
@@ -421,13 +466,13 @@ parenthesized_language(Node *n)
 		case T_RowPatternFactor:
 			RowPatternFactor *f = (RowPatternFactor *) n;
 
-			result = parenthesized_language(f->primary);
+			result = parenthesized_language(f->primary, max_rows);
 
 			if (!f->quantifier->min
 				|| intValue(f->quantifier->min) != 1
 				|| !f->quantifier->max
 				|| intValue(f->quantifier->max) != 1)
-				result = expand_factor(result, f->quantifier);
+				result = expand_factor(result, f->quantifier, max_rows);
 
 			break;
 
@@ -439,9 +484,31 @@ parenthesized_language(Node *n)
 }
 
 int
-main()
+main(int argc, char *argv[])
 {
-	PL	   *pl;
+	PL		   *pl;
+
+	int			max_rows = -1;
+	int			c;
+	static const struct option opts[] =
+	{
+		{ "max-rows", required_argument, 0, 'm' },
+		{ 0 },
+	};
+
+	while ((c = getopt_long(argc, argv, "m:", opts, NULL)) >= 0)
+	{
+		switch (c)
+		{
+			case 'm':
+				max_rows = atoi(optarg);
+				break;
+
+			default:
+				fprintf(stderr, "usage: %s [--max-rows M]\n", argv[0]);
+				exit(1);
+		}
+	}
 
 	lex_init();
 	if (base_yyparse())
@@ -450,10 +517,13 @@ main()
 	pretty_print((Node *) parsed);
 	printf("\n\n");
 
-	pl = parenthesized_language((Node *) parsed);
-	while (pl)
+	pl = parenthesized_language((Node *) parsed, max_rows);
+	for (; pl; pl = pl->next)
 	{
 		IDStr	   *id_str = (List *) pl->node;
+
+		if (max_rows >= 0 && num_variables(id_str) > max_rows)
+			continue;
 
 		while (id_str)
 		{
@@ -463,7 +533,6 @@ main()
 		}
 
 		printf("\n");
-		pl = pl->next;
 	}
 
 	return 0;
