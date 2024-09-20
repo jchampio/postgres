@@ -21,8 +21,29 @@ $
 ( ) 
 ( a ) 
 -- Parenthesization.
+\! rpr_prefer "(())"
+( ( ) ) 
 \! rpr_prefer "(a?)"
 ( ( a ) ) 
 ( ( ) ) 
+-- Concatenation.
 \! rpr_prefer "a b"
 ( a b ) 
+\! rpr_prefer "a b?"
+( a ( b ) ) 
+( a ( ) ) 
+\! rpr_prefer "a b c"
+( ( a b ) c ) 
+\! rpr_prefer "a b c?"
+( ( a b ) ( c ) ) 
+( ( a b ) ( ) ) 
+\! rpr_prefer "a b? c"
+( ( a ( b ) ) c ) 
+( ( a ( ) ) c ) 
+\! rpr_prefer "a b? c?"
+( ( a ( b ) ) ( c ) ) 
+( ( a ( b ) ) ( ) ) 
+( ( a ( ) ) ( c ) ) 
+( ( a ( ) ) ( ) ) 
+\! rpr_prefer "(a b)"
+( ( a b ) ) 

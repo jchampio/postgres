@@ -11,6 +11,14 @@
 \! rpr_prefer a{0,1}?
 
 -- Parenthesization.
+\! rpr_prefer "(())"
 \! rpr_prefer "(a?)"
 
+-- Concatenation.
 \! rpr_prefer "a b"
+\! rpr_prefer "a b?"
+\! rpr_prefer "a b c"
+\! rpr_prefer "a b c?"
+\! rpr_prefer "a b? c"
+\! rpr_prefer "a b? c?"
+\! rpr_prefer "(a b)"
