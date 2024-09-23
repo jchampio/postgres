@@ -47,3 +47,35 @@ $
 ( ( a ( ) ) ( ) ) 
 \! rpr_prefer "(a b)"
 ( ( a b ) ) 
+-- Alternation.
+\! rpr_prefer "a|b"
+( a - ) 
+( - b ) 
+\! rpr_prefer "a?|b?"
+( ( a ) - ) 
+( ( ) - ) 
+( - ( b ) ) 
+( - ( ) ) 
+\! rpr_prefer "a??|b?"
+( ( ) - ) 
+( ( a ) - ) 
+( - ( b ) ) 
+( - ( ) ) 
+\! rpr_prefer "a|b|c"
+( ( a - ) - ) 
+( ( - b ) - ) 
+( - c ) 
+\! rpr_prefer "a|(b|c)"
+( a - ) 
+( - ( ( b - ) ) ) 
+( - ( ( - c ) ) ) 
+\! rpr_prefer "a|(b|c)?"
+( a - ) 
+( - ( ( ( b - ) ) ) ) 
+( - ( ( ( - c ) ) ) ) 
+( - ( ) ) 
+\! rpr_prefer "(a|b)(c|d)"
+( ( ( a - ) ) ( ( c - ) ) ) 
+( ( ( a - ) ) ( ( - d ) ) ) 
+( ( ( - b ) ) ( ( c - ) ) ) 
+( ( ( - b ) ) ( ( - d ) ) ) 

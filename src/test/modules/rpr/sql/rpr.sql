@@ -22,3 +22,12 @@
 \! rpr_prefer "a b? c"
 \! rpr_prefer "a b? c?"
 \! rpr_prefer "(a b)"
+
+-- Alternation.
+\! rpr_prefer "a|b"
+\! rpr_prefer "a?|b?"
+\! rpr_prefer "a??|b?"
+\! rpr_prefer "a|b|c"
+\! rpr_prefer "a|(b|c)"
+\! rpr_prefer "a|(b|c)?"
+\! rpr_prefer "(a|b)(c|d)"
