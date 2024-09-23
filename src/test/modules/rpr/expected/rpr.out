@@ -127,6 +127,53 @@ $
 ( ( ( a ) ) ( ( a ) ) ) 
 ( ( ( a ) ) ( ( a ) ) ( ( ) ) ) 
 ( ( ( a ) ) ( ( a ) ) ( ( a ) ) ) 
+-- Unbounded quantifiers, with a --max-rows setting.
+\! rpr_prefer -m 3 "a*"
+( a a a ) 
+( a a ) 
+( a ) 
+( ) 
+\! rpr_prefer -m 3 "a{0,}"
+( a a a ) 
+( a a ) 
+( a ) 
+( ) 
+\! rpr_prefer -m 3 "a{,}"
+( a a a ) 
+( a a ) 
+( a ) 
+( ) 
+\! rpr_prefer -m 3 "a*?"
+( ) 
+( a ) 
+( a a ) 
+( a a a ) 
+\! rpr_prefer -m 3 "a{0,}?"
+( ) 
+( a ) 
+( a a ) 
+( a a a ) 
+\! rpr_prefer -m 3 "a{,}?"
+( ) 
+( a ) 
+( a a ) 
+( a a a ) 
+\! rpr_prefer -m 3 "a+"
+( a a a ) 
+( a a ) 
+( a ) 
+\! rpr_prefer -m 3 "a{1,}"
+( a a a ) 
+( a a ) 
+( a ) 
+\! rpr_prefer -m 3 "a+?"
+( a ) 
+( a a ) 
+( a a a ) 
+\! rpr_prefer -m 3 "a{1,}?"
+( a ) 
+( a a ) 
+( a a a ) 
 -- Parenthesization.
 \! rpr_prefer "(())"
 ( ( ) ) 

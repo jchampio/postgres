@@ -33,6 +33,19 @@
 \! rpr_prefer "(a??){2,3}"
 \! rpr_prefer "(a??){2,3}?"
 
+-- Unbounded quantifiers, with a --max-rows setting.
+\! rpr_prefer -m 3 "a*"
+\! rpr_prefer -m 3 "a{0,}"
+\! rpr_prefer -m 3 "a{,}"
+\! rpr_prefer -m 3 "a*?"
+\! rpr_prefer -m 3 "a{0,}?"
+\! rpr_prefer -m 3 "a{,}?"
+
+\! rpr_prefer -m 3 "a+"
+\! rpr_prefer -m 3 "a{1,}"
+\! rpr_prefer -m 3 "a+?"
+\! rpr_prefer -m 3 "a{1,}?"
+
 -- Parenthesization.
 \! rpr_prefer "(())"
 \! rpr_prefer "(a?)"
