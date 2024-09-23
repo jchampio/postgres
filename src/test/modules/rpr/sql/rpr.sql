@@ -80,3 +80,15 @@
 \! rpr_prefer "a|(b|c)"
 \! rpr_prefer "a|(b|c)?"
 \! rpr_prefer "(a|b)(c|d)"
+
+--
+-- Corner cases
+--
+
+-- Avoid explosions in runtime/memory...
+\! rpr_prefer -m 3 "(a*)*"
+
+-- Max-rows is less than the lowest variable count
+\! rpr_prefer -m 1 "first{3,}"
+\! rpr_prefer -m 5 "(first second){3,}"
+\! rpr_prefer -m 8 "(first second third){3,}"
