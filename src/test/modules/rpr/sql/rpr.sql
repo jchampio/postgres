@@ -40,11 +40,14 @@
 \! rpr_prefer -m 3 "a*?"
 \! rpr_prefer -m 3 "a{0,}?"
 \! rpr_prefer -m 3 "a{,}?"
+\! rpr_prefer -m 3 "^*"
+\! rpr_prefer -m 3 "^*?"
 
 \! rpr_prefer -m 3 "a+"
 \! rpr_prefer -m 3 "a{1,}"
 \! rpr_prefer -m 3 "a+?"
 \! rpr_prefer -m 3 "a{1,}?"
+\! rpr_prefer -m 3 "^+"
 
 -- Empty match rules must still apply.
 \! rpr_prefer -m 3 "(){0,}"
