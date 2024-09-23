@@ -26,6 +26,13 @@ $
 \! rpr_prefer "(a?)"
 ( ( a ) ) 
 ( ( ) ) 
+-- Exclusion.
+\! rpr_prefer "{- a -}"
+[ a ] 
+\! rpr_prefer "{- a b -}"
+[ ( a b ) ] 
+\! rpr_prefer "a {- a b -} b"
+( ( a [ ( a b ) ] ) b ) 
 -- Concatenation.
 \! rpr_prefer "a b"
 ( a b ) 

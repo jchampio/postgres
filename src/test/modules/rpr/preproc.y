@@ -534,7 +534,12 @@ row_pattern_primary:
 			| '$'									{ $$ = (Node *) makeString("$"); }
 			| '^'									{ $$ = (Node *) makeString("^"); }
 			| '(' opt_row_pattern ')'				{ $$ = (Node *) list_make1($2); }
-			| LEFT_BRACE_MINUS row_pattern RIGHT_MINUS_BRACE { $$ = $2; }
+			| LEFT_BRACE_MINUS row_pattern RIGHT_MINUS_BRACE
+				{
+					RowPatternExclusion *e = makeNode(RowPatternExclusion);
+					e->pattern = $2;
+					$$ = (Node *) e;
+				}
 		;
 
 opt_row_pattern:

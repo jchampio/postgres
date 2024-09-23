@@ -139,6 +139,15 @@ pretty_print(Node *parsed)
 
 			break;
 
+		case T_RowPatternExclusion:
+			RowPatternExclusion *e = (RowPatternExclusion *) parsed;
+
+			printf("{- ");
+			pretty_print(e->pattern);
+			printf(" -}");
+
+			break;
+
 		case T_String:
 			String *s = (String *) parsed;
 			printf("%s", s->sval);
@@ -474,6 +483,21 @@ parenthesized_language(Node *n, int max_rows)
 
 				result = lappend(result, str);
 				right = right->next;
+			}
+
+			break;
+
+		case T_RowPatternExclusion:
+			RowPatternExclusion *e = (RowPatternExclusion *) n;
+			PL		   *excluded = parenthesized_language(e->pattern, max_rows);
+
+			for (PL *p = excluded; p; p = p->next)
+			{
+				str = list_make1(makeString("["));
+				str = list_concat(str, list_copy((List *) p->node));
+				str = lappend(str, makeString("]"));
+
+				result = lappend(result, str);
 			}
 
 			break;

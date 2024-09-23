@@ -142,6 +142,7 @@ typedef enum NodeTag
 	T_RowPatternFactor,
 	T_RowPatternQuantifier,
 	T_RowPatternAlternation,
+	T_RowPatternExclusion,
 } NodeTag;
 
 typedef struct Node
@@ -213,6 +214,12 @@ typedef struct RowPatternAlternation
 	Node	   *left;
 	Node	   *right;
 } RowPatternAlternation;
+
+typedef struct RowPatternExclusion
+{
+	NodeTag		type;
+	Node	   *pattern;
+} RowPatternExclusion;
 
 extern Node *parsed_pattern;
 

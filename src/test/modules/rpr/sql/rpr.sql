@@ -14,6 +14,11 @@
 \! rpr_prefer "(())"
 \! rpr_prefer "(a?)"
 
+-- Exclusion.
+\! rpr_prefer "{- a -}"
+\! rpr_prefer "{- a b -}"
+\! rpr_prefer "a {- a b -} b"
+
 -- Concatenation.
 \! rpr_prefer "a b"
 \! rpr_prefer "a b?"
