@@ -18,12 +18,14 @@
 \! rpr_prefer a{2,2}?
 \! rpr_prefer a{1,3}
 \! rpr_prefer a{1,3}?
+\! rpr_prefer "^{3}"
 
 \! rpr_prefer "(a|b){1,3}"
 \! rpr_prefer "(a|b){1,3}?"
 
 -- Empty matches do not appear in the factor's PL except at the very end or in
 -- the positions prior to the quantifier's lower bound.
+\! rpr_prefer "^{3,10}"
 \! rpr_prefer "(a?){1,3}"
 \! rpr_prefer "(a?){1,3}?"
 \! rpr_prefer "(a?){2,3}"
