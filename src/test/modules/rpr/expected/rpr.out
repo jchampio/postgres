@@ -14,10 +14,16 @@ $
 \! rpr_prefer a{0,1}
 ( a ) 
 ( ) 
+\! rpr_prefer a{,1}
+( a ) 
+( ) 
 \! rpr_prefer a??
 ( ) 
 ( a ) 
 \! rpr_prefer a{0,1}?
+( ) 
+( a ) 
+\! rpr_prefer a{,1}?
 ( ) 
 ( a ) 
 -- Parenthesization.

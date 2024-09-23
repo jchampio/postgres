@@ -7,8 +7,10 @@
 -- Question mark quantifier (greedy and reluctant) and its verbose equivalent.
 \! rpr_prefer a?
 \! rpr_prefer a{0,1}
+\! rpr_prefer a{,1}
 \! rpr_prefer a??
 \! rpr_prefer a{0,1}?
+\! rpr_prefer a{,1}?
 
 -- Parenthesization.
 \! rpr_prefer "(())"
