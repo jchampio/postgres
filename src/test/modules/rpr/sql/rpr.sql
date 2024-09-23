@@ -46,6 +46,11 @@
 \! rpr_prefer -m 3 "a+?"
 \! rpr_prefer -m 3 "a{1,}?"
 
+-- Empty match rules must still apply.
+\! rpr_prefer -m 3 "(){0,}"
+\! rpr_prefer -m 3 "(){1,}"
+\! rpr_prefer -m 3 "(){2,}"
+
 -- Parenthesization.
 \! rpr_prefer "(())"
 \! rpr_prefer "(a?)"
