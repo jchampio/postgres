@@ -81,6 +81,12 @@
 \! rpr_prefer "a|(b|c)?"
 \! rpr_prefer "(a|b)(c|d)"
 
+-- Permutation.
+\! rpr_prefer "PERMUTE(a)"
+\! rpr_prefer "PERMUTE(a, b)"
+\! rpr_prefer "PERMUTE(a?, b?)"
+\! rpr_prefer "PERMUTE(a, b, c)"
+
 --
 -- Corner cases
 --

@@ -143,6 +143,7 @@ typedef enum NodeTag
 	T_RowPatternQuantifier,
 	T_RowPatternAlternation,
 	T_RowPatternExclusion,
+	T_RowPatternPermutation,
 } NodeTag;
 
 typedef struct Node
@@ -159,10 +160,13 @@ typedef struct List
 	Node	   *node;
 	struct List *next;
 	struct List *last;
+
+	int			permutation_index; /* hack for easy permutation */
 } List;
 
 List * list_make1(void *datum);
 List * lappend(List *list, void *datum);
+List * list_concat(List *l1, List *l2);
 
 #define NIL						((List *) NULL)
 
@@ -220,6 +224,12 @@ typedef struct RowPatternExclusion
 	NodeTag		type;
 	Node	   *pattern;
 } RowPatternExclusion;
+
+typedef struct RowPatternPermutation
+{
+	NodeTag		type;
+	List	   *patterns;
+} RowPatternPermutation;
 
 extern Node *parsed_pattern;
 

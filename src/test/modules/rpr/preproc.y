@@ -196,6 +196,7 @@ make3_str(char *str1, char *str2, char *str3)
 %type <node>	row_pattern opt_row_pattern row_pattern_term
 				row_pattern_alternation row_pattern_factor row_pattern_primary
 				opt_quantifier opt_iconst
+%type <list>	permute_list
 %type <boolean>	opt_reluctant
 
 /* orig_tokens */
@@ -399,7 +400,7 @@ make3_str(char *str1, char *str2, char *str3)
  %nonassoc UNBOUNDED NESTED
  %nonassoc IDENT
 %nonassoc CSTRING PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
- SET KEYS OBJECT_P SCALAR VALUE_P WITH WITHOUT PATH
+ SET KEYS OBJECT_P SCALAR VALUE_P WITH WITHOUT PATH PERMUTE
  MEASURES AFTER INITIAL SEEK PATTERN_P
  %left Op OPERATOR
  %left '+' '-'
@@ -540,11 +541,22 @@ row_pattern_primary:
 					e->pattern = $2;
 					$$ = (Node *) e;
 				}
+			| PERMUTE '(' permute_list ')'
+				{
+					RowPatternPermutation *p = makeNode(RowPatternPermutation);
+					p->patterns = $3;
+					$$ = (Node *) p;
+				}
 		;
 
 opt_row_pattern:
 			row_pattern								{ $$ = $1; }
 			| /* EMPTY */							{ $$ = NULL; }
+		;
+
+permute_list:
+			row_pattern								{ $$ = list_make1($1); }
+			| permute_list ',' row_pattern			{ $$ = lappend($1, $3); }
 		;
 
 

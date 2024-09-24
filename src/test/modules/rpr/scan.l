@@ -23,10 +23,19 @@
 #include <ctype.h>
 #include <limits.h>
 
+#include "common/keywords.h"
 #include "common/string.h"
 
 #include "preproc_extern.h"
 #include "preproc.h"
+
+#define PG_KEYWORD(kwname, value, category, collabel) value,
+
+const uint16 ScanKeywordTokens[] = {
+#include "parser/kwlist.h"
+};
+
+#undef PG_KEYWORD
 }
 
 %{
@@ -905,6 +914,13 @@ other			.
 				}
 
 {identifier}	{
+					int			kwnum;
+
+					/* Is it a keyword? */
+					kwnum = ScanKeywordLookup(yytext, &ScanKeywords);
+					if (kwnum >= 0)
+						return ScanKeywordTokens[kwnum];
+
 					/*
 					 * None of the above.  Return it as an identifier.
 					 *
