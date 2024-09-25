@@ -716,8 +716,18 @@ main(int argc, char *argv[])
 		switch (c)
 		{
 			case 'm':
-				max_rows = atoi(optarg);
+			{
+				char	   *end;
+				max_rows = strtol(optarg, &end, 10);
+
+				if (optarg[0] == '\0' || *end != '\0' || max_rows < 0)
+				{
+					fprintf(stderr, "invalid --max-rows: \"%s\"\n", optarg);
+					usage_and_exit(1);
+				}
+
 				break;
+			}
 
 			default:
 				usage_and_exit(1);
