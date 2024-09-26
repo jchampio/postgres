@@ -403,3 +403,32 @@ SELECT company, tdate, price, first_value(price) OVER w, last_value(price) OVER 
   UP AS price > PREV(price),
   DOWN AS price < PREV(price)
 );
+
+-- Smoke test for larger partitions.
+WITH s AS (
+ SELECT v, count(*) OVER w AS c
+ FROM (SELECT generate_series(1, 5000) v)
+ WINDOW w AS (
+  ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+  AFTER MATCH SKIP PAST LAST ROW
+  INITIAL
+  PATTERN ( r+ )
+  DEFINE r AS TRUE
+ )
+)
+-- Should be exactly one long match across all rows.
+SELECT * FROM s WHERE c > 0;
+
+WITH s AS (
+ SELECT v, count(*) OVER w AS c
+ FROM (SELECT generate_series(1, 5000) v)
+ WINDOW w AS (
+  ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+  AFTER MATCH SKIP PAST LAST ROW
+  INITIAL
+  PATTERN ( r )
+  DEFINE r AS TRUE
+ )
+)
+-- Every row should be its own match.
+SELECT count(*) FROM s WHERE c > 0;
