@@ -22,7 +22,7 @@
 #include "postgres_fe.h"
 
 #include "preproc_extern.h"
-#include "preproc.h"
+#include "gram.h"
 
 
 static bool have_lookahead;		/* is lookahead info valid? */

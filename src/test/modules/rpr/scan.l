@@ -27,7 +27,7 @@
 #include "common/string.h"
 
 #include "preproc_extern.h"
-#include "preproc.h"
+#include "gram.h"
 
 #define PG_KEYWORD(kwname, value, category, collabel) value,
 

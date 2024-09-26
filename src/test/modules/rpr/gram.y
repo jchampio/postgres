@@ -6,7 +6,7 @@
 #include "postgres_fe.h"
 
 #include "preproc_extern.h"
-#include "preproc.h"
+#include "gram.h"
 #include <unistd.h>
 
 /* silence -Wmissing-variable-declarations */

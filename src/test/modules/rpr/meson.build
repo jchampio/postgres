@@ -5,8 +5,8 @@ rpr_prefer_sources = files(
   'rpr_prefer.c',
 )
 
-rpr_grammar = custom_target('preproc',
-  input: 'preproc.y',
+rpr_grammar = custom_target('rpr_grammar',
+  input: 'gram.y',
   kwargs: bison_kw,
 )
 generated_sources += rpr_grammar.to_list()
