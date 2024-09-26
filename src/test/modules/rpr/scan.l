@@ -23,19 +23,42 @@
 #include <ctype.h>
 #include <limits.h>
 
-#include "common/keywords.h"
 #include "common/string.h"
 
 #include "preproc_extern.h"
 #include "gram.h"
 
+static const char ScanKeywords_kw_string[] =
+	"permute";
+
+static const uint16 ScanKeywords_kw_offsets[] = {
+	0,
+};
+
+#define SCANKEYWORDS_NUM_KEYWORDS 1
+
+static int
+ScanKeywords_hash_func(const void *key, size_t keylen)
+{
+	return 0;
+}
+
+const ScanKeywordList ScanKeywords = {
+	ScanKeywords_kw_string,
+	ScanKeywords_kw_offsets,
+	ScanKeywords_hash_func,
+	SCANKEYWORDS_NUM_KEYWORDS,
+	7
+};
+
 #define PG_KEYWORD(kwname, value, category, collabel) value,
 
 const uint16 ScanKeywordTokens[] = {
-#include "parser/kwlist.h"
+PG_KEYWORD("permute", PERMUTE, UNRESERVED_KEYWORD, BARE_LABEL)
 };
 
 #undef PG_KEYWORD
+
 }
 
 %{
