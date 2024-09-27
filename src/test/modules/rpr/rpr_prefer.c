@@ -305,7 +305,7 @@ expand_factor(PL *primary, RowPatternQuantifier *quant, int max_rows)
 	PL		   *prefixes;
 	int			min = 0;
 	int			max = 0;
-	int			expansions;
+	int			expansions = 0;
 
 	if (!quant->max && max_rows == -1)
 		mmfatal(ET_ERROR, "infinite quantifiers not supported without --max-rows");
