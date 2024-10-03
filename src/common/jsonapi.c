@@ -161,6 +161,7 @@ struct JsonParserStack
  */
 struct JsonIncrementalState
 {
+	bool		started;
 	bool		is_last_chunk;
 	bool		partial_completed;
 	jsonapi_StrValType partial_token;
@@ -541,6 +542,16 @@ makeJsonLexContextIncremental(JsonLexContext *lex, int encoding,
 void
 setJsonLexContextOwnsTokens(JsonLexContext *lex, bool owned_by_context)
 {
+	if (lex->incremental && lex->inc_state->started)
+	{
+		/*
+		 * Switching this flag after parsing has already started is a
+		 * programming error.
+		 */
+		Assert(false);
+		return;
+	}
+
 	if (owned_by_context)
 		lex->flags |= JSONLEX_CTX_OWNS_TOKENS;
 	else
@@ -874,6 +885,7 @@ pg_parse_json_incremental(JsonLexContext *lex,
 	lex->input = lex->token_terminator = lex->line_start = json;
 	lex->input_length = len;
 	lex->inc_state->is_last_chunk = is_last;
+	lex->inc_state->started = true;
 
 	/* get the initial token */
 	result = json_lex(lex);
