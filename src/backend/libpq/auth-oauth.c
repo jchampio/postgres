@@ -620,10 +620,10 @@ validate(Port *port, const char *auth)
 	/* Make sure the validator authenticated the user. */
 	if (ret->authn_id == NULL || ret->authn_id[0] == '\0')
 	{
-		/* TODO: use logdetail; reduce message duplication */
 		ereport(LOG,
-				(errmsg("OAuth bearer authentication failed for user \"%s\": validator provided no identity",
-						port->user_name)));
+				errmsg("OAuth bearer authentication failed for user \"%s\"",
+					   port->user_name),
+				errdetail_log("Validator provided no identity"));
 		return false;
 	}
 
