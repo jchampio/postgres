@@ -1868,6 +1868,7 @@ finish_token_request(struct async_ctx *actx, struct token *tok)
 	 * There are references online to implementations using 403 for error
 	 * return which would violate the specification. For now we stick to the
 	 * specification but we might have to revisit this.
+	 * TODO test 401 and WWW-Authenticate
 	 */
 	if (response_code == 400 || response_code == 401)
 	{
