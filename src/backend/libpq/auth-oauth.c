@@ -534,7 +534,9 @@ validate_token_format(const char *header)
 	if (!header || strlen(header) <= 7)
 	{
 		ereport(COMMERROR,
-				(errmsg("malformed OAuth bearer token 1")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAuth bearer token"),
+				errdetail_log("Bearer token is less than 8 bytes."));
 		return NULL;
 	}
 
@@ -552,9 +554,9 @@ validate_token_format(const char *header)
 	if (!*token)
 	{
 		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAuth bearer token 2"),
-				 errdetail("Bearer token is empty.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAuth bearer token"),
+				errdetail_log("Bearer token is empty."));
 		return NULL;
 	}
 
@@ -574,9 +576,9 @@ validate_token_format(const char *header)
 		 * of someone's password into the logs.
 		 */
 		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAuth bearer token 3"),
-				 errdetail("Bearer token is not in the correct format.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAuth bearer token"),
+				errdetail_log("Bearer token is not in the correct format."));
 		return NULL;
 	}
 
