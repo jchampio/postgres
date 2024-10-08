@@ -1852,32 +1852,34 @@ finish_token_request(struct async_ctx *actx, struct token *tok)
 	CHECK_GETINFO(actx, CURLINFO_RESPONSE_CODE, &response_code, return false);
 
 	/*
-	 * Per RFC 6749, Section 5, a successful response uses 200 OK. An error
-	 * response uses either 400 Bad Request or 401 Unauthorized.
-	 *
-	 * TODO: there are references online to 403 appearing in the wild...
-	 */
-	if (response_code != 200
-		&& response_code != 400
-		 /* && response_code != 401 TODO */ )
-	{
-		actx_error(actx, "unexpected response code %ld", response_code);
-		return false;
-	}
-
-	/*
-	 * Pull the fields we care about from the document.
+	 * Per RFC 6749, Section 5, a successful response uses 200 OK.
 	 */
 	if (response_code == 200)
 	{
 		actx->errctx = "failed to parse access token response";
 		if (!parse_access_token(actx, tok))
 			return false;		/* error message already set */
-	}
-	else if (!parse_token_error(actx, &tok->err))
-		return false;
 
-	return true;
+		return true;
+	}
+
+	/*
+	 * An error response uses either 400 Bad Request or 401 Unauthorized.
+	 * There are references online to implementations using 403 for error
+	 * return which would violate the specification. For now we stick to the
+	 * specification but we might have to revisit this.
+	 */
+	if (response_code == 400 || response_code == 401)
+	{
+		if (!parse_token_error(actx, &tok->err))
+			return false;
+
+		return true;
+	}
+
+	/* Any other response codes are considered invalid */
+	actx_error(actx, "unexpected response code %ld", response_code);
+	return false;
 }
 
 /*
