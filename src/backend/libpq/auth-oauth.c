@@ -512,6 +512,7 @@ generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen)
 	initStringInfo(&buf);
 
 	/*
+	 * TODO
 	 * Escaping the string here is belt-and-suspenders defensive programming
 	 * since escapable characters aren't valid in either the issuer URI or the
 	 * scope list, but the HBA doesn't enforce that yet.
@@ -691,6 +692,7 @@ validate(Port *port, const char *auth)
 	/* Make sure the validator authenticated the user. */
 	if (ret->authn_id == NULL || ret->authn_id[0] == '\0')
 	{
+		/* TODO: test logdetail; reduce message duplication elsewhere */
 		ereport(LOG,
 				errmsg("OAuth bearer authentication failed for user \"%s\"",
 					   port->user_name),
