@@ -535,13 +535,15 @@ def test_oauth_with_explicit_issuer(
     access_token = secrets.token_urlsafe()
 
     def check_client_authn(headers, params):
-        if not secret:
+        if secret is None:
+            assert "Authorization" not in headers
             assert params["client_id"] == [client_id]
             return
 
         # Require the client to use Basic authn; request-body credentials are
         # NOT RECOMMENDED (RFC 6749, Sec. 2.3.1).
         assert "Authorization" in headers
+        assert "client_id" not in params
 
         method, creds = headers["Authorization"].split()
         assert method == "Basic"
