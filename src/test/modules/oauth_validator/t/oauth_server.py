@@ -73,10 +73,21 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
     @property
     def client_id(self) -> str:
         """
-        Returns the client_id sent in the POST body. self._parse_params() must
-        have been called first.
+        Returns the client_id sent in the POST body or the Authorization header.
+        self._parse_params() must have been called first.
         """
-        return self._params["client_id"][0]
+        if "client_id" in self._params:
+            return self._params["client_id"][0]
+
+        if "Authorization" not in self.headers:
+            raise RuntimeError("client did not send any client_id")
+
+        _, creds = self.headers["Authorization"].split()
+
+        decoded = base64.b64decode(creds)
+        username, _ = decoded.split(b":")
+
+        return username.decode()
 
     def do_POST(self):
         self._response_code = 200

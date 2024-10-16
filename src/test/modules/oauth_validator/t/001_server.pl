@@ -112,6 +112,7 @@ if ($node->connect_ok("user=$user dbname=postgres oauth_client_id=f02c6361-0636"
 #
 
 my $common_connstr = "user=testparam dbname=postgres ";
+my $base_connstr = $common_connstr;
 
 sub connstr
 {
@@ -120,7 +121,7 @@ sub connstr
 	my $json = encode_json(\%params);
 	my $encoded = encode_base64($json, "");
 
-	return "$common_connstr oauth_client_id=$encoded";
+	return "$base_connstr oauth_client_id=$encoded";
 }
 
 # Make sure the param system works end-to-end first.
@@ -241,11 +242,19 @@ $node->connect_fails(
 	expected_stderr => qr/bearer authentication failed/);
 
 # Test behavior of the oauth_client_secret.
-$common_connstr = "$common_connstr oauth_client_secret=12345";
+$base_connstr = "$common_connstr oauth_client_secret=''";
+
+$node->connect_ok(
+	connstr(stage => 'all', expected_secret => ''),
+	"empty oauth_client_secret",
+	expected_stderr =>
+	  qr@Visit https://example\.com/ and enter the code: postgresuser@);
+
+$base_connstr = "$common_connstr oauth_client_secret=12345";
 
 $node->connect_ok(
 	connstr(stage => 'all', expected_secret => '12345'),
-	"oauth_client_secret",
+	"nonempty oauth_client_secret",
 	expected_stderr =>
 	  qr@Visit https://example\.com/ and enter the code: postgresuser@);
 
