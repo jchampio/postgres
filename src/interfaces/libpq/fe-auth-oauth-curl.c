@@ -1572,6 +1572,20 @@ drive_request(struct async_ctx *actx)
 }
 
 /*
+ * URL-Encoding Helpers
+ */
+
+static void
+append_urlencoded(PQExpBuffer buf, const char *key, const char *value)
+{
+	if (buf->len)
+		appendPQExpBufferStr(buf, "&");
+
+	/* TODO: actually URL-encode */
+	appendPQExpBuffer(buf, "%s=%s", key, value);
+}
+
+/*
  * Specific HTTP Request Handlers
  *
  * This is finally the beginning of the actual application logic. Generally
@@ -1715,6 +1729,54 @@ check_for_device_flow(struct async_ctx *actx)
 }
 
 /*
+ * Adds the client ID (and potentially client secret) to the current request,
+ * either via HTTP headers or the request body.
+ */
+static bool
+add_client_identification(struct async_ctx *actx, PQExpBuffer reqbody, PGconn *conn)
+{
+	if (conn->oauth_client_secret)
+	{
+		/*----
+		 * Use HTTP Basic auth to send the client_id and secret. Per RFC 6749,
+		 * Sec. 2.3.1,
+		 *
+		 *   Including the client credentials in the request-body using the
+		 *   two parameters is NOT RECOMMENDED and SHOULD be limited to
+		 *   clients unable to directly utilize the HTTP Basic authentication
+		 *   scheme (or other password-based HTTP authentication schemes).
+		 *
+		 * An empty secret is permitted and is distinct from an unauthenticated
+		 * request.
+		 *
+		 * client_id is not added to the request body in this case; not only is
+		 * it redundant, but some providers in the wild (e.g. Okta) refuse to
+		 * accept it.
+		 *
+		 * TODO: url-encode...?
+		 */
+		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_BASIC, return false);
+		CHECK_SETOPT(actx, CURLOPT_USERNAME, conn->oauth_client_id, return false);
+		CHECK_SETOPT(actx, CURLOPT_PASSWORD, conn->oauth_client_secret, return false);
+
+		actx->used_basic_auth = true;
+	}
+	else
+	{
+		/*
+		 * If we're not otherwise authenticating, client_id is REQUIRED in the
+		 * request body.
+		 */
+		append_urlencoded(reqbody, "client_id", conn->oauth_client_id);
+
+		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_NONE, return false);
+		actx->used_basic_auth = false;
+	}
+
+	return true;
+}
+
+/*
  * Queue a Device Authorization Request:
  *
  *     https://www.rfc-editor.org/rfc/rfc8628#section-3.1
@@ -1733,11 +1795,13 @@ start_device_authz(struct async_ctx *actx, PGconn *conn)
 	Assert(conn->oauth_client_id);	/* ensured by get_auth_token() */
 	Assert(device_authz_uri);	/* ensured by check_for_device_flow() */
 
-	/* Construct our request body. TODO: url-encode */
+	/* Construct our request body. */
 	resetPQExpBuffer(work_buffer);
-	appendPQExpBuffer(work_buffer, "client_id=%s", conn->oauth_client_id);
 	if (conn->oauth_scope)
-		appendPQExpBuffer(work_buffer, "&scope=%s", conn->oauth_scope);
+		append_urlencoded(work_buffer, "scope", conn->oauth_scope);
+
+	if (!add_client_identification(actx, work_buffer, conn))
+		return false;
 
 	if (PQExpBufferBroken(work_buffer))
 	{
@@ -1748,31 +1812,6 @@ start_device_authz(struct async_ctx *actx, PGconn *conn)
 	/* Make our request. */
 	CHECK_SETOPT(actx, CURLOPT_URL, device_authz_uri, return false);
 	CHECK_SETOPT(actx, CURLOPT_COPYPOSTFIELDS, work_buffer->data, return false);
-
-	if (conn->oauth_client_secret)
-	{
-		/*----
-		 * Use HTTP Basic auth to send the password. Per RFC 6749, Sec. 2.3.1,
-		 *
-		 *   Including the client credentials in the request-body using the
-		 *   two parameters is NOT RECOMMENDED and SHOULD be limited to
-		 *   clients unable to directly utilize the HTTP Basic authentication
-		 *   scheme (or other password-based HTTP authentication schemes).
-		 *
-		 * TODO: should we omit client_id from the body in this case?
-		 * TODO: url-encode...?
-		 */
-		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_BASIC, return false);
-		CHECK_SETOPT(actx, CURLOPT_USERNAME, conn->oauth_client_id, return false);
-		CHECK_SETOPT(actx, CURLOPT_PASSWORD, conn->oauth_client_secret, return false);
-
-		actx->used_basic_auth = true;
-	}
-	else
-	{
-		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_NONE, return false);
-		actx->used_basic_auth = false;
-	}
 
 	return start_request(actx);
 }
@@ -1844,46 +1883,23 @@ start_token_request(struct async_ctx *actx, PGconn *conn)
 	Assert(token_uri);			/* ensured by get_discovery_document() */
 	Assert(device_code);		/* ensured by run_device_authz() */
 
-	/* Construct our request body. TODO: url-encode */
+	/* Construct our request body. */
 	resetPQExpBuffer(work_buffer);
-	appendPQExpBuffer(work_buffer, "client_id=%s", conn->oauth_client_id);
-	appendPQExpBuffer(work_buffer, "&device_code=%s", device_code);
-	appendPQExpBuffer(work_buffer, "&grant_type=%s",
-					  OAUTH_GRANT_TYPE_DEVICE_CODE);
-	/* TODO check for broken buffer */
+	append_urlencoded(work_buffer, "device_code", device_code);
+	append_urlencoded(work_buffer, "grant_type", OAUTH_GRANT_TYPE_DEVICE_CODE);
+
+	if (!add_client_identification(actx, work_buffer, conn))
+		return false;
+
+	if (PQExpBufferBroken(work_buffer))
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
 
 	/* Make our request. */
 	CHECK_SETOPT(actx, CURLOPT_URL, token_uri, return false);
 	CHECK_SETOPT(actx, CURLOPT_COPYPOSTFIELDS, work_buffer->data, return false);
-
-	if (conn->oauth_client_secret)
-	{
-		/*----
-		 * Use HTTP Basic auth to send the password. Per RFC 6749, Sec. 2.3.1,
-		 *
-		 *   Including the client credentials in the request-body using the
-		 *   two parameters is NOT RECOMMENDED and SHOULD be limited to
-		 *   clients unable to directly utilize the HTTP Basic authentication
-		 *   scheme (or other password-based HTTP authentication schemes).
-		 *
-		 * TODO: should we omit client_id from the body in this case?
-		 * TODO: url-encode...?
-		 */
-		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_BASIC, return false);
-		CHECK_SETOPT(actx, CURLOPT_USERNAME, conn->oauth_client_id, return false);
-		CHECK_SETOPT(actx, CURLOPT_PASSWORD, conn->oauth_client_secret, return false);
-
-		actx->used_basic_auth = true;
-	}
-	else
-	{
-		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_NONE, return false);
-		actx->used_basic_auth = false;
-	}
-
-	resetPQExpBuffer(work_buffer);
-	CHECK_SETOPT(actx, CURLOPT_WRITEFUNCTION, append_data, return false);
-	CHECK_SETOPT(actx, CURLOPT_WRITEDATA, actx, return false);
 
 	return start_request(actx);
 }
