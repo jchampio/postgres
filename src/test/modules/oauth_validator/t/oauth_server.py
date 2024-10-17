@@ -33,15 +33,17 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
         if secret is None:
             return
 
-        if "Authorization" not in self.headers:
-            raise RuntimeError("client did not send Authorization header")
+        assert "Authorization" in self.headers
 
         method, creds = self.headers["Authorization"].split()
 
         if method != "Basic":
             raise RuntimeError(f"client used {method} auth; expected Basic")
 
-        expected_creds = f"{self.client_id}:{secret}"
+        username = urllib.parse.quote_plus(self.client_id)
+        password = urllib.parse.quote_plus(secret)
+        expected_creds = f"{username}:{password}"
+
         if creds.encode() != base64.b64encode(expected_creds.encode()):
             raise RuntimeError(
                 f"client sent '{creds}'; expected b64encode('{expected_creds}')"
@@ -84,10 +86,10 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
 
         _, creds = self.headers["Authorization"].split()
 
-        decoded = base64.b64decode(creds)
-        username, _ = decoded.split(b":")
+        decoded = base64.b64decode(creds).decode("utf-8")
+        username, _ = decoded.split(":", 1)
 
-        return username.decode()
+        return urllib.parse.unquote_plus(username)
 
     def do_POST(self):
         self._response_code = 200

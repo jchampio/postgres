@@ -104,6 +104,18 @@ if ($node->connect_ok("user=$user dbname=postgres oauth_client_id=f02c6361-0636"
 	$log_start = $log_end;
 }
 
+# Make sure the client_id and secret are correctly encoded.
+$node->connect_ok(
+	"user=$user dbname=postgres oauth_client_id='+=& :'",
+	"escapable characters: client_id",
+	expected_stderr =>
+	  qr@Visit https://example\.org/ and enter the code: postgresuser@);
+$node->connect_ok(
+	"user=$user dbname=postgres oauth_client_id='+=& :' oauth_client_secret='+=& :'",
+	"escapable characters: client_id and secret",
+	expected_stderr =>
+	  qr@Visit https://example\.org/ and enter the code: postgresuser@);
+
 #
 # Further tests rely on support for specific behaviors in oauth_server.py. To
 # trigger these behaviors, we ask for the special issuer .../param (which is set
