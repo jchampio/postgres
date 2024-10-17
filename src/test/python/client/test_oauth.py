@@ -331,7 +331,20 @@ class OpenIDProvider(threading.Thread):
             assert self.headers["Content-Type"] == "application/x-www-form-urlencoded"
 
             body = self._request_body()
-            params = urllib.parse.parse_qs(body)
+
+            # parse_qs() is understandably fairly lax when it comes to
+            # acceptable characters, but we're stricter. Spaces must be encoded,
+            # and they must use the '+' encoding rather than "%20".
+            assert " " not in body
+            assert "%20" not in body
+
+            params = urllib.parse.parse_qs(
+                body,
+                keep_blank_values=True,
+                strict_parsing=True,
+                encoding="utf-8",
+                errors="strict",
+            )
 
             self._handle(params=params)
 
@@ -690,6 +703,103 @@ def test_oauth_requires_client_id(accept, openid_provider):
     expected_error = "no oauth_client_id is set"
     with pytest.raises(psycopg2.OperationalError, match=expected_error):
         client.check_completed()
+
+
+@pytest.mark.parametrize("client_id", ["", ":", " + ", r'+=&"\/~'])
+@pytest.mark.parametrize("secret", [None, "", ":", " + ", r'+=&"\/~'])
+@pytest.mark.parametrize("device_code", ["", " + ", r'+=&"\/~'])
+@pytest.mark.parametrize("scope", ["&", r"+=&/"])
+def test_url_encoding(accept, openid_provider, client_id, secret, device_code, scope):
+    sock, client = accept(
+        oauth_issuer=openid_provider.issuer,
+        oauth_client_id=client_id,
+        oauth_client_secret=secret,
+        oauth_scope=scope,
+    )
+
+    user_code = f"{secrets.token_hex(2)}-{secrets.token_hex(2)}"
+    verification_url = "https://example.com/device"
+
+    access_token = secrets.token_urlsafe()
+
+    def check_client_authn(headers, params):
+        if secret is None:
+            assert "Authorization" not in headers
+            assert params["client_id"] == [client_id]
+            return
+
+        # Require the client to use Basic authn; request-body credentials are
+        # NOT RECOMMENDED (RFC 6749, Sec. 2.3.1).
+        assert "Authorization" in headers
+        assert "client_id" not in params
+
+        method, creds = headers["Authorization"].split()
+        assert method == "Basic"
+
+        decoded = base64.b64decode(creds).decode("utf-8")
+        username, password = decoded.split(":", 1)
+
+        expected_username = urllib.parse.quote_plus(client_id)
+        expected_password = urllib.parse.quote_plus(secret)
+
+        assert [username, password] == [expected_username, expected_password]
+
+    # Set up our provider callbacks.
+    # NOTE that these callbacks will be called on a background thread. Don't do
+    # any unprotected state mutation here.
+
+    def authorization_endpoint(headers, params):
+        check_client_authn(headers, params)
+
+        if scope:
+            assert params["scope"] == [scope]
+        else:
+            assert "scope" not in params
+
+        resp = {
+            "device_code": device_code,
+            "user_code": user_code,
+            "interval": 0,
+            "verification_url": verification_url,
+            "expires_in": 5,
+        }
+
+        return 200, resp
+
+    openid_provider.register_endpoint(
+        "device_authorization_endpoint", "POST", "/device", authorization_endpoint
+    )
+
+    def token_endpoint(headers, params):
+        check_client_authn(headers, params)
+
+        assert params["grant_type"] == ["urn:ietf:params:oauth:grant-type:device_code"]
+        assert params["device_code"] == [device_code]
+
+        # Successfully finish the request by sending the access bearer token.
+        resp = {
+            "access_token": access_token,
+            "token_type": "bearer",
+        }
+
+        return 200, resp
+
+    openid_provider.register_endpoint(
+        "token_endpoint", "POST", "/token", token_endpoint
+    )
+
+    with sock:
+        with pq3.wrap(sock, debug_stream=sys.stdout) as conn:
+            # Initiate a handshake, which should result in the above endpoints
+            # being called.
+            initial = start_oauth_handshake(conn)
+
+            # Validate and accept the token.
+            auth = get_auth_value(initial)
+            assert auth == f"Bearer {access_token}".encode("ascii")
+
+            pq3.send(conn, pq3.types.AuthnRequest, type=pq3.authn.SASLFinal)
+            finish_handshake(conn)
 
 
 @pytest.mark.slow
