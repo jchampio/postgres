@@ -1575,14 +1575,78 @@ drive_request(struct async_ctx *actx)
  * URL-Encoding Helpers
  */
 
+/*
+ * Encodes a string using the application/x-www-form-urlencoded format, and
+ * appends it to the given buffer.
+ */
 static void
-append_urlencoded(PQExpBuffer buf, const char *key, const char *value)
+append_urlencoded(PQExpBuffer buf, const char *s)
+{
+	char	   *escaped;
+	char	   *haystack;
+	char	   *match;
+
+	escaped = curl_easy_escape(NULL, s, 0);
+	if (!escaped)
+	{
+		markPQExpBufferBroken(buf);
+		return;
+	}
+
+	/*
+	 * curl_easy_escape() almost does what we want, but we need the
+	 * query-specific flavor which uses '+' instead of '%20' for spaces. The
+	 * Curl command-line tool does this with a simple search-and-replace, so
+	 * follow its lead.
+	 */
+	haystack = escaped;
+
+	while ((match = strstr(haystack, "%20")) != NULL)
+	{
+		size_t		unmatched_len = match - haystack;
+
+		/* Append the unmatched portion, followed by the plus sign. */
+		appendBinaryPQExpBuffer(buf, haystack, unmatched_len);
+		appendPQExpBufferChar(buf, '+');
+
+		/* Keep searching after the match. */
+		haystack = match + 3 /* strlen("%20") */ ;
+	}
+
+	/* Push the remainder of the string onto the buffer. */
+	appendPQExpBufferStr(buf, haystack);
+
+	curl_free(escaped);
+}
+
+/*
+ * Convenience wrapper for encoding a single string. Returns NULL on allocation
+ * failure.
+ */
+static char *
+urlencode(const char *s)
+{
+	PQExpBufferData buf;
+
+	initPQExpBuffer(&buf);
+	append_urlencoded(&buf, s);
+
+	return PQExpBufferDataBroken(buf) ? NULL : buf.data;
+}
+
+/*
+ * Appends a key/value pair to the end of an application/x-www-form-urlencoded
+ * list.
+ */
+static void
+build_urlencoded(PQExpBuffer buf, const char *key, const char *value)
 {
 	if (buf->len)
-		appendPQExpBufferStr(buf, "&");
+		appendPQExpBufferChar(buf, '&');
 
-	/* TODO: actually URL-encode */
-	appendPQExpBuffer(buf, "%s=%s", key, value);
+	append_urlencoded(buf, key);
+	appendPQExpBufferChar(buf, '=');
+	append_urlencoded(buf, value);
 }
 
 /*
@@ -1729,13 +1793,17 @@ check_for_device_flow(struct async_ctx *actx)
 }
 
 /*
- * Adds the client ID (and potentially client secret) to the current request,
- * either via HTTP headers or the request body.
+ * Adds the client ID (and secret, if provided) to the current request, using
+ * either HTTP headers or the request body.
  */
 static bool
 add_client_identification(struct async_ctx *actx, PQExpBuffer reqbody, PGconn *conn)
 {
-	if (conn->oauth_client_secret)
+	bool		success = false;
+	char	   *username = NULL;
+	char	   *password = NULL;
+
+	if (conn->oauth_client_secret)	/* Zero-length secrets are permitted! */
 	{
 		/*----
 		 * Use HTTP Basic auth to send the client_id and secret. Per RFC 6749,
@@ -1746,18 +1814,35 @@ add_client_identification(struct async_ctx *actx, PQExpBuffer reqbody, PGconn *c
 		 *   clients unable to directly utilize the HTTP Basic authentication
 		 *   scheme (or other password-based HTTP authentication schemes).
 		 *
-		 * An empty secret is permitted and is distinct from an unauthenticated
-		 * request.
+		 * Additionally:
 		 *
-		 * client_id is not added to the request body in this case; not only is
-		 * it redundant, but some providers in the wild (e.g. Okta) refuse to
-		 * accept it.
+		 *   The client identifier is encoded using the
+		 *   "application/x-www-form-urlencoded" encoding algorithm per Appendix
+		 *   B, and the encoded value is used as the username; the client
+		 *   password is encoded using the same algorithm and used as the
+		 *   password.
 		 *
-		 * TODO: url-encode...?
+		 * (Appendix B modifies application/x-www-form-urlencoded by requiring
+		 * an initial UTF-8 encoding step. Since the client ID and secret must
+		 * both be 7-bit ASCII -- RFC 6749 Appendix A -- we don't worry about
+		 * that in this function.)
+		 *
+		 * client_id is not added to the request body in this case. Not only
+		 * would it be redundant, but some providers in the wild (e.g. Okta)
+		 * refuse to accept it.
 		 */
-		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_BASIC, return false);
-		CHECK_SETOPT(actx, CURLOPT_USERNAME, conn->oauth_client_id, return false);
-		CHECK_SETOPT(actx, CURLOPT_PASSWORD, conn->oauth_client_secret, return false);
+		username = urlencode(conn->oauth_client_id);
+		password = urlencode(conn->oauth_client_secret);
+
+		if (!username || !password)
+		{
+			actx_error(actx, "out of memory");
+			goto cleanup;
+		}
+
+		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_BASIC, goto cleanup);
+		CHECK_SETOPT(actx, CURLOPT_USERNAME, username, goto cleanup);
+		CHECK_SETOPT(actx, CURLOPT_PASSWORD, password, goto cleanup);
 
 		actx->used_basic_auth = true;
 	}
@@ -1767,13 +1852,19 @@ add_client_identification(struct async_ctx *actx, PQExpBuffer reqbody, PGconn *c
 		 * If we're not otherwise authenticating, client_id is REQUIRED in the
 		 * request body.
 		 */
-		append_urlencoded(reqbody, "client_id", conn->oauth_client_id);
+		build_urlencoded(reqbody, "client_id", conn->oauth_client_id);
 
-		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_NONE, return false);
+		CHECK_SETOPT(actx, CURLOPT_HTTPAUTH, CURLAUTH_NONE, goto cleanup);
 		actx->used_basic_auth = false;
 	}
 
-	return true;
+	success = true;
+
+cleanup:
+	free(username);
+	free(password);
+
+	return success;
 }
 
 /*
@@ -1798,7 +1889,7 @@ start_device_authz(struct async_ctx *actx, PGconn *conn)
 	/* Construct our request body. */
 	resetPQExpBuffer(work_buffer);
 	if (conn->oauth_scope)
-		append_urlencoded(work_buffer, "scope", conn->oauth_scope);
+		build_urlencoded(work_buffer, "scope", conn->oauth_scope);
 
 	if (!add_client_identification(actx, work_buffer, conn))
 		return false;
@@ -1885,8 +1976,8 @@ start_token_request(struct async_ctx *actx, PGconn *conn)
 
 	/* Construct our request body. */
 	resetPQExpBuffer(work_buffer);
-	append_urlencoded(work_buffer, "device_code", device_code);
-	append_urlencoded(work_buffer, "grant_type", OAUTH_GRANT_TYPE_DEVICE_CODE);
+	build_urlencoded(work_buffer, "device_code", device_code);
+	build_urlencoded(work_buffer, "grant_type", OAUTH_GRANT_TYPE_DEVICE_CODE);
 
 	if (!add_client_identification(actx, work_buffer, conn))
 		return false;
