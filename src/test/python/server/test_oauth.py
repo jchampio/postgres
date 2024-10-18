@@ -751,7 +751,7 @@ def test_oauth_bad_response_to_error_challenge(conn, oauth_ctx, resp_type, resp,
             ExpectedError(
                 PROTOCOL_VIOLATION_ERRCODE,
                 "malformed OAUTHBEARER message",
-                "Unexpected attribute 0x00",  # XXX this is a bit strange
+                'Unexpected attribute "0x00"',  # XXX this is a bit strange
             ),
             id="bad GS2 header: missing authzid terminator",
         ),
