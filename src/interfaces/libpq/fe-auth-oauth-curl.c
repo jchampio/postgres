@@ -1888,7 +1888,7 @@ start_device_authz(struct async_ctx *actx, PGconn *conn)
 
 	/* Construct our request body. */
 	resetPQExpBuffer(work_buffer);
-	if (conn->oauth_scope)
+	if (conn->oauth_scope && conn->oauth_scope[0])
 		build_urlencoded(work_buffer, "scope", conn->oauth_scope);
 
 	if (!add_client_identification(actx, work_buffer, conn))
