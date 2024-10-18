@@ -603,6 +603,7 @@ validate(Port *port, const char *auth)
 	int			map_status;
 	ValidatorModuleResult *ret;
 	const char *token;
+	bool		status;
 
 	/* Ensure that we have a correct token to validate */
 	if (!(token = validate_token_format(auth)))
