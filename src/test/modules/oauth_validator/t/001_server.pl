@@ -296,8 +296,9 @@ $node->connect_fails(
 #
 
 # Searching the logs is easier if OAuth parameter discovery isn't cluttering
-# things up; hardcode the issuer.
-$common_connstr = "user=test dbname=postgres oauth_issuer=$issuer";
+# things up; hardcode the issuer. (Scope is hardcoded to empty to cover that
+# case as well.)
+$common_connstr = "user=test dbname=postgres oauth_issuer=$issuer oauth_scope=''";
 
 $bgconn->query_safe("ALTER SYSTEM SET oauth_validator.authn_id TO ''");
 $node->reload;

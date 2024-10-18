@@ -34,7 +34,6 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
             return
 
         assert "Authorization" in self.headers
-
         method, creds = self.headers["Authorization"].split()
 
         if method != "Basic":
@@ -70,7 +69,13 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
         form = self.rfile.read(size)
 
         assert self.headers["Content-Type"] == "application/x-www-form-urlencoded"
-        return urllib.parse.parse_qs(form.decode("utf-8"), strict_parsing=True)
+        return urllib.parse.parse_qs(
+            form.decode("utf-8"),
+            strict_parsing=True,
+            keep_blank_values=True,
+            encoding="utf-8",
+            errors="strict",
+        )
 
     @property
     def client_id(self) -> str:
@@ -277,6 +282,10 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
             self._token_state.min_delay = interval
         else:
             self._token_state.min_delay = 5  # default
+
+        # Check the scope.
+        if "scope" in self._params:
+            assert self._params["scope"][0], "empty scopes should be omitted"
 
         return resp
 
