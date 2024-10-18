@@ -122,6 +122,12 @@ extern void destroyPQExpBuffer(PQExpBuffer str);
 extern void termPQExpBuffer(PQExpBuffer str);
 
 /*------------------------
+ * markPQExpBufferBroken
+ *		Put a PQExpBuffer in "broken" state if it isn't already.
+ */
+extern void markPQExpBufferBroken(PQExpBuffer str);
+
+/*------------------------
  * resetPQExpBuffer
  *		Reset a PQExpBuffer to empty
  *
