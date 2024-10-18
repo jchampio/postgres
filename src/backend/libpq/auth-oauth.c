@@ -461,9 +461,9 @@ generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen)
 	 */
 	if (!ctx->issuer || !ctx->scope)
 		ereport(FATAL,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("OAuth is not properly configured for this user"),
-				 errdetail_log("The issuer and scope parameters must be set in pg_hba.conf.")));
+				errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("OAuth is not properly configured for this user"),
+				errdetail_log("The issuer and scope parameters must be set in pg_hba.conf."));
 
 	/*------
 	 * Build the .well-known URI based on our issuer.
