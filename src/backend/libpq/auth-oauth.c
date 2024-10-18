@@ -147,9 +147,9 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 				errdetail("The message is empty."));
 	if (inputlen != strlen(input))
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("Message length does not match input length.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("Message length does not match input length."));
 
 	switch (ctx->state)
 	{
