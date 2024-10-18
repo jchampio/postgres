@@ -21,7 +21,8 @@ if ($ENV{with_oauth} ne 'curl')
 {
 	plan skip_all => 'client-side OAuth not supported by this build';
 }
-elsif ($ENV{with_python} ne 'yes')
+
+if ($ENV{with_python} ne 'yes')
 {
 	plan skip_all => 'OAuth tests require --with-python to run';
 }
