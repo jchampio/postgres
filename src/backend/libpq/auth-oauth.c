@@ -142,9 +142,9 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	 */
 	if (inputlen == 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("The message is empty.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("The message is empty."));
 	if (inputlen != strlen(input))
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
