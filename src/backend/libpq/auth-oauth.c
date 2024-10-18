@@ -697,6 +697,7 @@ load_validator_library(void)
 
 	ValidatorCallbacks = (*validator_init) ();
 
+	/* Allocate memory for validator library private state data */
 	validator_module_state = (ValidatorModuleState *) palloc0(sizeof(ValidatorModuleState));
 	if (ValidatorCallbacks->startup_cb != NULL)
 		ValidatorCallbacks->startup_cb(validator_module_state);
