@@ -630,7 +630,8 @@ validate(Port *port, const char *auth)
 		 * validator implementation; all that matters is that the validator
 		 * says the user can log in with the target role.
 		 */
-		return true;
+		status = true;
+		goto cleanup;
 	}
 
 	/* Make sure the validator authenticated the user. */
