@@ -203,10 +203,10 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 			p++;
 			if (*p != ',')
 				ereport(ERROR,
-						(errcode(ERRCODE_PROTOCOL_VIOLATION),
-						 errmsg("malformed OAUTHBEARER message"),
-						 errdetail("Comma expected, but found character \"%s\".",
-								   sanitize_char(*p))));
+						errcode(ERRCODE_PROTOCOL_VIOLATION),
+						errmsg("malformed OAUTHBEARER message"),
+						errdetail("Comma expected, but found character \"%s\".",
+								  sanitize_char(*p)));
 			p++;
 			break;
 
