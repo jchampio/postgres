@@ -331,20 +331,22 @@ class OpenIDProvider(threading.Thread):
             assert self.headers["Content-Type"] == "application/x-www-form-urlencoded"
 
             body = self._request_body()
+            if body:
+                # parse_qs() is understandably fairly lax when it comes to
+                # acceptable characters, but we're stricter. Spaces must be
+                # encoded, and they must use the '+' encoding rather than "%20".
+                assert " " not in body
+                assert "%20" not in body
 
-            # parse_qs() is understandably fairly lax when it comes to
-            # acceptable characters, but we're stricter. Spaces must be encoded,
-            # and they must use the '+' encoding rather than "%20".
-            assert " " not in body
-            assert "%20" not in body
-
-            params = urllib.parse.parse_qs(
-                body,
-                keep_blank_values=True,
-                strict_parsing=True,
-                encoding="utf-8",
-                errors="strict",
-            )
+                params = urllib.parse.parse_qs(
+                    body,
+                    keep_blank_values=True,
+                    strict_parsing=True,
+                    encoding="utf-8",
+                    errors="strict",
+                )
+            else:
+                params = {}
 
             self._handle(params=params)
 
