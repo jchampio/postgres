@@ -686,6 +686,10 @@ load_validator_library(void)
 		load_external_function(OAuthValidatorLibrary,
 							   "_PG_oauth_validator_module_init", false, NULL);
 
+	/*
+	 * The validator init function is required since it will set the callbacks
+	 * for the validator library.
+	 */
 	if (validator_init == NULL)
 		ereport(ERROR,
 				(errmsg("%s module \"%s\" have to define the symbol %s",
