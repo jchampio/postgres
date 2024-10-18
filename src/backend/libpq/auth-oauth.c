@@ -647,7 +647,21 @@ validate(Port *port, const char *auth)
 	/* Finally, check the user map. */
 	map_status = check_usermap(port->hba->usermap, port->user_name,
 							   MyClientConnectionInfo.authn_id, false);
-	return (map_status == STATUS_OK);
+	status = (map_status == STATUS_OK);
+
+cleanup:
+	/*
+	 * Clear and free the validation result from the validator module once
+	 * we're done with it to avoid accidental re-use.
+	 */
+	if (ret->authn_id != NULL)
+	{
+		explicit_bzero(ret->authn_id, strlen(ret->authn_id));
+		pfree(ret->authn_id);
+	}
+	pfree(ret);
+
+	return status;
 }
 
 static void
