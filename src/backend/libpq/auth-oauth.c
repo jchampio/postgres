@@ -692,8 +692,8 @@ load_validator_library(void)
 	 */
 	if (validator_init == NULL)
 		ereport(ERROR,
-				(errmsg("%s module \"%s\" have to define the symbol %s",
-						"OAuth validator", OAuthValidatorLibrary, "_PG_oauth_validator_module_init")));
+				errmsg("%s modules \"%s\" have to define the symbol %s",
+					   "OAuth validator", OAuthValidatorLibrary, "_PG_oauth_validator_module_init"));
 
 	ValidatorCallbacks = (*validator_init) ();
 
