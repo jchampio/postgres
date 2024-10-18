@@ -614,7 +614,10 @@ validate(Port *port, const char *auth)
 										  token, port->user_name);
 
 	if (!ret->authorized)
-		return false;
+	{
+		status = false;
+		goto cleanup;
+	}
 
 	if (ret->authn_id)
 		set_authn_id(port, ret->authn_id);
