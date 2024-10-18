@@ -679,8 +679,8 @@ load_validator_library(void)
 
 	if (OAuthValidatorLibrary[0] == '\0')
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("oauth_validator_library is not set")));
+				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("oauth_validator_library is not set"));
 
 	validator_init = (OAuthValidatorModuleInit)
 		load_external_function(OAuthValidatorLibrary,
