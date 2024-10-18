@@ -92,8 +92,8 @@ oauth_init(Port *port, const char *selected_mech, const char *shadow_pass)
 
 	if (strcmp(selected_mech, OAUTHBEARER_NAME) != 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("client selected an invalid SASL authentication mechanism")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("client selected an invalid SASL authentication mechanism"));
 
 	ctx = palloc0(sizeof(*ctx));
 
