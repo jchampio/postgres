@@ -404,9 +404,9 @@ parse_kvpairs_for_auth(char **input)
 		sep = strchr(pos, '=');
 		if (!sep)
 			ereport(ERROR,
-					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("malformed OAUTHBEARER message"),
-					 errdetail("Message contains a key without a value.")));
+					errcode(ERRCODE_PROTOCOL_VIOLATION),
+					errmsg("malformed OAUTHBEARER message"),
+					errdetail("Message contains a key without a value."));
 		*sep = '\0';
 
 		/* Both key and value are now safely terminated. */
