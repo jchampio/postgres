@@ -227,10 +227,10 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 				errmsg("client uses authorization identity, but it is not supported"));
 	if (*p != ',')
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("Unexpected attribute %s in client-first-message.",
-						   sanitize_char(*p))));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("Unexpected attribute \"%s\" in client-first-message.",
+						  sanitize_char(*p)));
 	p++;
 
 	/* All remaining fields are separated by the RFC's kvsep (\x01). */
