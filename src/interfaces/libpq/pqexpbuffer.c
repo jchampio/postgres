@@ -46,7 +46,7 @@ static const char *const oom_buffer_ptr = oom_buffer;
  *
  * Put a PQExpBuffer in "broken" state if it isn't already.
  */
-static void
+void
 markPQExpBufferBroken(PQExpBuffer str)
 {
 	if (str->data != oom_buffer)
