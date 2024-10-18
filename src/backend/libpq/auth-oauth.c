@@ -193,9 +193,9 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	{
 		case 'p':
 			ereport(ERROR,
-					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("malformed OAUTHBEARER message"),
-					 errdetail("The server does not support channel binding for OAuth, but the client message includes channel binding data.")));
+					errcode(ERRCODE_PROTOCOL_VIOLATION),
+					errmsg("malformed OAUTHBEARER message"),
+					errdetail("The server does not support channel binding for OAuth, but the client message includes channel binding data."));
 			break;
 
 		case 'y':				/* fall through */
