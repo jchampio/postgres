@@ -418,9 +418,9 @@ parse_kvpairs_for_auth(char **input)
 		{
 			if (auth)
 				ereport(ERROR,
-						(errcode(ERRCODE_PROTOCOL_VIOLATION),
-						 errmsg("malformed OAUTHBEARER message"),
-						 errdetail("Message contains multiple auth values.")));
+						errcode(ERRCODE_PROTOCOL_VIOLATION),
+						errmsg("malformed OAUTHBEARER message"),
+						errdetail("Message contains multiple auth values."));
 
 			auth = value;
 		}
