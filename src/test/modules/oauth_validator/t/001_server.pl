@@ -11,6 +11,12 @@ use PostgreSQL::Test::Utils;
 use PostgreSQL::Test::OAuthServer;
 use Test::More;
 
+if (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\boauth\b/)
+{
+	plan skip_all =>
+	  'Potentially unsafe test oauth not enabled in PG_TEST_EXTRA';
+}
+
 if ($ENV{with_oauth} ne 'curl')
 {
 	plan skip_all => 'client-side OAuth not supported by this build';
