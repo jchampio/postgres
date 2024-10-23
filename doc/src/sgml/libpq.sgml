@@ -10031,7 +10031,7 @@ void PQsetAuthDataHook(PQauthDataHook_type hook);
 
      <listitem>
       <para>
-       TODO
+       Retrieves the current value of <literal>PGauthDataHook</literal>.
 <synopsis>
 PQauthDataHook_type PQgetAuthDataHook(void);
 </synopsis>
