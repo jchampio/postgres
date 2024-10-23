@@ -165,9 +165,9 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 			 */
 			if (inputlen != 1 || *input != KVSEP)
 				ereport(ERROR,
-						(errcode(ERRCODE_PROTOCOL_VIOLATION),
-						 errmsg("malformed OAUTHBEARER message"),
-						 errdetail("Client did not send a kvsep response.")));
+						errcode(ERRCODE_PROTOCOL_VIOLATION),
+						errmsg("malformed OAUTHBEARER message"),
+						errdetail("Client did not send a kvsep response."));
 
 			/* The (failed) handshake is now complete. */
 			ctx->state = OAUTH_STATE_FINISHED;
