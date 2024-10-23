@@ -10018,6 +10018,11 @@ void PQinitSSL(int do_ssl);
 void PQsetAuthDataHook(PQauthDataHook_type hook);
 </synopsis>
       </para>
+
+      <para>
+       If <replaceable>hook</replaceable> is set to a null pointer instead of
+       a function pointer, the default hook will be installed.
+      </para>
      </listitem>
     </varlistentry>
 
