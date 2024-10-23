@@ -236,10 +236,10 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	/* All remaining fields are separated by the RFC's kvsep (\x01). */
 	if (*p != KVSEP)
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("Key-value separator expected, but found character %s.",
-						   sanitize_char(*p))));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("Key-value separator expected, but found character \"%s\".",
+						  sanitize_char(*p)));
 	p++;
 
 	auth = parse_kvpairs_for_auth(&p);
