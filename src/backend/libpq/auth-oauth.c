@@ -90,7 +90,7 @@ oauth_init(Port *port, const char *selected_mech, const char *shadow_pass)
 {
 	struct oauth_ctx *ctx;
 
-	if (strcmp(selected_mech, OAUTHBEARER_NAME))
+	if (strcmp(selected_mech, OAUTHBEARER_NAME) != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 				 errmsg("client selected an invalid SASL authentication mechanism")));
