@@ -83,6 +83,32 @@ typedef void (*ValidatorStartupCB) (ValidatorModuleState *state);
 <programlisting>
 typedef ValidatorModuleResult *(*ValidatorValidateCB) (ValidatorModuleState *state, const char *token, const char *role);
 </programlisting>
+
+    <replaceable>token</replaceable> will contain the bearer token to validate,
+    <replaceable>role</replaceable> will contain the role the user request to
+    log in as. The callback must return a <literal>ValidatorModuleResult</literal>
+    struct which is defined as below:
+
+<programlisting>
+typedef struct ValidatorModuleResult
+{
+    bool        authorized;
+    char       *authn_id;
+} ValidatorModuleResult;
+</programlisting>
+
+    If <structfield>authorized</structfield> is set to <literal>true</literal>
+    the bearer token is defined to be valid.
+    To authenticate the user, the authenticated user name shall be returned in
+    the <structfield>authn_id</structfield> field. When authenticating against
+    a HBA rule with <literal>trust_validator_authz</literal> turned on the
+    <structfield>authn_id</structfield> user name must exactly match the role
+    expected to login as.
+   </para>
+   <para>
+    The caller assumes ownership of the returned memory allocation, the
+    validator module should not in any way access the memory after it has been
+    returned.
    </para>
   </sect2>
 
