@@ -223,8 +223,8 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	 */
 	if (*p == 'a')
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("client uses authorization identity, but it is not supported")));
+				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("client uses authorization identity, but it is not supported"));
 	if (*p != ',')
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
