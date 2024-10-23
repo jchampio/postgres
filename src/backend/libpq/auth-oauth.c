@@ -438,9 +438,9 @@ parse_kvpairs_for_auth(char **input)
 	}
 
 	ereport(ERROR,
-			(errcode(ERRCODE_PROTOCOL_VIOLATION),
-			 errmsg("malformed OAUTHBEARER message"),
-			 errdetail("Message did not contain a final terminator.")));
+			errcode(ERRCODE_PROTOCOL_VIOLATION),
+			errmsg("malformed OAUTHBEARER message"),
+			errdetail("Message did not contain a final terminator."));
 
 	pg_unreachable();
 	return NULL;
