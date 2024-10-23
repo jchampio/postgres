@@ -341,9 +341,9 @@ validate_kvpair(const char *key, const char *val)
 
 			default:
 				ereport(ERROR,
-						(errcode(ERRCODE_PROTOCOL_VIOLATION),
-						 errmsg("malformed OAUTHBEARER message"),
-						 errdetail("Message contains an invalid value.")));
+						errcode(ERRCODE_PROTOCOL_VIOLATION),
+						errmsg("malformed OAUTHBEARER message"),
+						errdetail("Message contains an invalid value."));
 		}
 	}
 }
