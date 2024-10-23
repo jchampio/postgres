@@ -252,9 +252,9 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	/* We should be at the end of our message. */
 	if (*p)
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("Message contains additional data after the final terminator.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("Message contains additional data after the final terminator."));
 
 	if (!validate(ctx->port, auth))
 	{
