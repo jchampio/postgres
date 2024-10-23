@@ -43,12 +43,15 @@ statement: ecpgstart at toplevel_stmt ';'
 	}
 	| '}'
 	{
-		remove_typedefs(braces_open);
-		remove_variables(braces_open--);
-		if (braces_open == 0)
+		if (braces_open > 0)
 		{
-			free(current_function);
-			current_function = NULL;
+			remove_typedefs(braces_open);
+			remove_variables(braces_open);
+			if (--braces_open == 0)
+			{
+				free(current_function);
+				current_function = NULL;
+			}
 		}
 		fputs("}", base_yyout);
 	}
@@ -433,6 +436,7 @@ ECPGCursorStmt: DECLARE cursor_name cursor_options CURSOR opt_hold FOR prepared_
 		this->name = mm_strdup(@2);
 		this->function = (current_function ? mm_strdup(current_function) : NULL);
 		this->connection = connection ? mm_strdup(connection) : NULL;
+		this->opened = false;
 		this->command = mm_strdup(cat_str(6, "declare", cursor_marker, @3, "cursor", @5, "for $1"));
 		this->argsresult = NULL;
 		this->argsresult_oos = NULL;
