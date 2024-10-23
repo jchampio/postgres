@@ -2368,7 +2368,8 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>oauth_scope</literal></term>
       <listitem>
        <para>
-        TODO
+        The scope of the access request sent to the authorization server.
+        This parameter is optional.
        </para>
       </listitem>
      </varlistentry>
