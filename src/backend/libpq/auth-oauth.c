@@ -664,6 +664,14 @@ cleanup:
 	return status;
 }
 
+/*
+ * load_validator_library
+ *
+ * Load the configured validator library in order to perform token validation.
+ * There is no built-in fallback since validation is implementation specific. If
+ * no validator library is configured, or of it fails to load, then error out
+ * since token validation won't be possible.
+ */
 static void
 load_validator_library(void)
 {
