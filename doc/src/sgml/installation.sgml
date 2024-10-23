@@ -2522,6 +2522,21 @@ ninja install
       </listitem>
      </varlistentry>
 
+     <varlistentry id="configure-with-oauth">
+      <term><option>-Doauth={ auto | <replaceable>LIBRARY</replaceable> | disabled }</option></term>
+      <listitem>
+       <para>
+        Build with OAuth authentication and authorization support.  The only
+        <replaceable>LIBRARY</replaceable> supported is <option>curl</option>.
+        This requires the <productname>curl</productname> package to be
+        installed.  Building with this will check for the required header files
+        and libraries to make sure that your <productname>curl</productname>
+        installation is sufficient before proceeding. The default for this
+        option is auto.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="configure-with-systemd-meson">
       <term><option>-Dsystemd={ auto | enabled | disabled }</option></term>
       <listitem>
