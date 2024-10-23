@@ -386,9 +386,9 @@ parse_kvpairs_for_auth(char **input)
 		end = strchr(pos, KVSEP);
 		if (!end)
 			ereport(ERROR,
-					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("malformed OAUTHBEARER message"),
-					 errdetail("Message contains an unterminated key/value pair.")));
+					errcode(ERRCODE_PROTOCOL_VIOLATION),
+					errmsg("malformed OAUTHBEARER message"),
+					errdetail("Message contains an unterminated key/value pair."));
 		*end = '\0';
 
 		if (pos == end)
