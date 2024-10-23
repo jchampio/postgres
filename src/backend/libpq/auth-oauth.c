@@ -212,10 +212,10 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 
 		default:
 			ereport(ERROR,
-					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("malformed OAUTHBEARER message"),
-					 errdetail("Unexpected channel-binding flag %s.",
-							   sanitize_char(cbind_flag))));
+					errcode(ERRCODE_PROTOCOL_VIOLATION),
+					errmsg("malformed OAUTHBEARER message"),
+					errdetail("Unexpected channel-binding flag \"%s\".",
+							  sanitize_char(cbind_flag)));
 	}
 
 	/*
