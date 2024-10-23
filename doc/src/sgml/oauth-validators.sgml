@@ -7,7 +7,7 @@
  </indexterm>
  <para>
   <productname>PostgreSQL</productname> provides infrastructure for creating
-  custom modules to perform server-side validation of OAuth tokens.
+  custom modules to perform server-side validation of OAuth bearer tokens.
  </para>
  <para>
   OAuth validation modules must at least consist of an initialization function
