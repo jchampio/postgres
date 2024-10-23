@@ -2341,7 +2341,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>oauth_client_id</literal></term>
       <listitem>
        <para>
-        TODO
+        The client identifier as issued by the authorization server.
        </para>
       </listitem>
      </varlistentry>
