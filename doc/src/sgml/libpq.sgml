@@ -2350,7 +2350,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>oauth_client_secret</literal></term>
       <listitem>
        <para>
-        TODO
+        The client password.
        </para>
       </listitem>
      </varlistentry>
