@@ -308,9 +308,9 @@ validate_kvpair(const char *key, const char *val)
 
 	if (!key[0])
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("Message contains an empty key name.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("Message contains an empty key name."));
 
 	span = strspn(key, key_allowed_set);
 	if (key[span] != '\0')
