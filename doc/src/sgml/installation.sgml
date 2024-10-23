@@ -1141,6 +1141,19 @@ build-postgresql:
        </listitem>
       </varlistentry>
 
+      <varlistentry id="configure-option-with-libcurl">
+       <term><option>--with-libcurl</option></term>
+       <listitem>
+        <para>
+         Build with libcurl support for OAuth 2.0 client flows.
+         This requires the <productname>curl</productname> package to be
+         installed.  Building with this will check for the required header files
+         and libraries to make sure that your <productname>curl</productname>
+         installation is sufficient before proceeding.
+        </para>
+       </listitem>
+      </varlistentry>
+
       <varlistentry id="configure-option-with-libxml">
        <term><option>--with-libxml</option></term>
        <listitem>
@@ -2579,6 +2592,20 @@ ninja install
          </para>
         </listitem>
        </itemizedlist>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="configure-with-libcurl-meson">
+      <term><option>-Dlibcurl={ auto | enabled | disabled }</option></term>
+      <listitem>
+       <para>
+        Build with libcurl support for OAuth 2.0 client flows.
+        This requires the <productname>curl</productname> package to be
+        installed.  Building with this will check for the required header files
+        and libraries to make sure that your <productname>curl</productname>
+        installation is sufficient before proceeding. The default for this
+        option is auto.
+       </para>
       </listitem>
      </varlistentry>
 

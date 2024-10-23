@@ -142,8 +142,6 @@ if test "$pgac_cv_ldap_safe" != yes; then
 *** also uses LDAP will crash on exit.])
 fi])
 
-
-
 # PGAC_CHECK_READLINE
 # -------------------
 # Check for the readline library and dependent libraries, either

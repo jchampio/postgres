@@ -369,6 +369,9 @@ CState
 CTECycleClause
 CTEMaterialize
 CTESearchClause
+CURL
+CURLM
+CURLoption
 CV
 CachedExpression
 CachedPlan
@@ -1719,6 +1722,7 @@ NumericDigit
 NumericSortSupport
 NumericSumAccum
 NumericVar
+OAuthValidatorCallbacks
 OM_uint32
 OP
 OSAPerGroupState
@@ -1827,6 +1831,7 @@ PGVerbosity
 PG_Locale_Strategy
 PG_Lock_Status
 PG_init_t
+PGauthData
 PGcancel
 PGcancelConn
 PGcmdQueueEntry
@@ -1834,7 +1839,9 @@ PGconn
 PGdataValue
 PGlobjfuncs
 PGnotify
+PGoauthBearerRequest
 PGpipelineStatus
+PGpromptOAuthDevice
 PGresAttDesc
 PGresAttValue
 PGresParamDesc
@@ -1946,6 +1953,7 @@ PQArgBlock
 PQEnvironmentOption
 PQExpBuffer
 PQExpBufferData
+PQauthDataHook_type
 PQcommMethods
 PQconninfoOption
 PQnoticeProcessor
@@ -3071,6 +3079,8 @@ VacuumRelation
 VacuumStmt
 ValidIOData
 ValidateIndexState
+ValidatorModuleState
+ValidatorModuleResult
 ValuesScan
 ValuesScanState
 Var
@@ -3464,6 +3474,7 @@ explain_get_index_name_hook_type
 f_smgr
 fasthash_state
 fd_set
+fe_oauth_state
 fe_scram_state
 fe_scram_state_enum
 fetch_range_request
@@ -3668,6 +3679,7 @@ nsphash_hash
 ntile_context
 nullingrel_info
 numeric
+oauth_state
 object_access_hook_type
 object_access_hook_type_str
 off_t

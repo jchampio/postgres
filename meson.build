@@ -855,6 +855,24 @@ endif
 
 
 ###############################################################
+# Library: libcurl
+###############################################################
+
+libcurlopt = get_option('libcurl')
+if not libcurlopt.disabled()
+  # Check for libcurl 7.61.0 or higher (corresponding to RHEL8 and the ability
+  # to explicitly set TLS 1.3 ciphersuites).
+  libcurl = dependency('libcurl', version: '>= 7.61.0', required: libcurlopt)
+  if libcurl.found()
+    cdata.set('USE_LIBCURL', 1)
+  endif
+else
+  libcurl = not_found_dep
+endif
+
+
+
+###############################################################
 # Library: libxml
 ###############################################################
 
@@ -3030,6 +3048,10 @@ libpq_deps += [
 
   gssapi,
   ldap_r,
+  # XXX libcurl must link after libgssapi_krb5 on FreeBSD to avoid segfaults
+  # during gss_acquire_cred(). This is possibly related to Curl's Heimdal
+  # dependency on that platform?
+  libcurl,
   libintl,
   ssl,
 ]
@@ -3698,6 +3720,7 @@ if meson.version().version_compare('>=0.57')
       'gss': gssapi,
       'icu': icu,
       'ldap': ldap,
+      'libcurl': libcurl,
       'libxml': libxml,
       'libxslt': libxslt,
       'llvm': llvm,

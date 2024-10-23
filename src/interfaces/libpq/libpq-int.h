@@ -432,6 +432,16 @@ struct pg_conn
 								 * cancel request, instead of being a normal
 								 * connection that's used for queries */
 
+	/* OAuth v2 */
+	char	   *oauth_issuer;	/* token issuer/URL */
+	char	   *oauth_issuer_id;	/* token issuer identifier */
+	char	   *oauth_discovery_uri;	/* URI of the issuer's discovery
+										 * document */
+	char	   *oauth_client_id;	/* client identifier */
+	char	   *oauth_client_secret;	/* client secret */
+	char	   *oauth_scope;	/* access token scope */
+	PGTernaryBool oauth_want_retry; /* should we retry on failure? */
+
 	/* Optional file to write trace info to */
 	FILE	   *Pfdebug;
 	int			traceFlags;
@@ -505,6 +515,11 @@ struct pg_conn
 	char		current_auth_response;	/* used by pqTraceOutputMessage to
 										 * know which auth response we're
 										 * sending */
+
+	/* Callback for external async authentication */
+	PostgresPollingStatusType (*async_auth) (PGconn *conn, pgsocket *altsock);
+	pgsocket	altsock;		/* alternative socket for client to poll */
+
 
 	/* Transient state needed while establishing connection */
 	PGTargetServerType target_server_type;	/* desired session properties */

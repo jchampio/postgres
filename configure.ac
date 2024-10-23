@@ -1008,6 +1008,27 @@ AC_SUBST(with_uuid)
 
 
 #
+# libcurl
+#
+AC_MSG_CHECKING([whether to build with libcurl support for OAuth client flows])
+PGAC_ARG_BOOL(with, libcurl, no, [build with libcurl support for OAuth client flows],
+              [AC_DEFINE([USE_LIBCURL], 1, [Define to 1 to build with libcurl support for OAuth client flows. (--with-libcurl)])])
+AC_MSG_RESULT([$with_libcurl])
+AC_SUBST(with_libcurl)
+
+if test "$with_libcurl" = yes ; then
+  # Check for libcurl 7.61.0 or higher (corresponding to RHEL8 and the ability
+  # to explicitly set TLS 1.3 ciphersuites).
+  PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.61.0])
+
+  # OAuth requires python for testing
+  if test "$with_python" != yes; then
+    AC_MSG_WARN([*** OAuth support tests require --with-python to run])
+  fi
+fi
+
+
+#
 # XML
 #
 AC_MSG_CHECKING([whether to build with XML support])
@@ -1292,6 +1313,13 @@ if test "$with_zlib" = yes; then
 If you have zlib already installed, see config.log for details on the
 failure.  It is possible the compiler isn't looking in the proper directory.
 Use --without-zlib to disable zlib support.])])
+fi
+
+# XXX libcurl must link after libgssapi_krb5 on FreeBSD to avoid segfaults
+# during gss_acquire_cred(). This is possibly related to Curl's Heimdal
+# dependency on that platform?
+if test "$with_libcurl" = yes ; then
+  AC_CHECK_LIB(curl, curl_multi_init, [], [AC_MSG_ERROR([library 'curl' is required for --with-libcurl])])
 fi
 
 if test "$with_gssapi" = yes ; then
@@ -1586,6 +1614,10 @@ elif test "$with_uuid" = ossp ; then
       [AC_EGREP_HEADER([uuid_export], uuid.h, [],
         [AC_MSG_ERROR([header file <uuid.h> does not match OSSP UUID library])])],
       [AC_MSG_ERROR([header file <ossp/uuid.h> or <uuid.h> is required for OSSP UUID])])])
+fi
+
+if test "$with_libcurl" = yes; then
+  AC_CHECK_HEADER(curl/curl.h, [], [AC_MSG_ERROR([header file <curl/curl.h> is required for --with-libcurl])])
 fi
 
 if test "$PORTNAME" = "win32" ; then
