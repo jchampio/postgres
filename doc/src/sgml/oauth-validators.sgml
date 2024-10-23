@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/oauth-validators.sgml -->
 
 <chapter id="oauth-validators">
- <title>Implementing OAuth Validator Modules</title>
+ <title>OAuth Validator Modules</title>
  <indexterm zone="oauth-validators">
   <primary>OAuth Validators</primary>
  </indexterm>
