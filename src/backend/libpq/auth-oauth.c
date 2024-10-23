@@ -245,9 +245,9 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	auth = parse_kvpairs_for_auth(&p);
 	if (!auth)
 		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed OAUTHBEARER message"),
-				 errdetail("Message does not contain an auth value.")));
+				errcode(ERRCODE_PROTOCOL_VIOLATION),
+				errmsg("malformed OAUTHBEARER message"),
+				errdetail("Message does not contain an auth value."));
 
 	/* We should be at the end of our message. */
 	if (*p)
