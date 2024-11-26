@@ -19,6 +19,7 @@ SUBDIRS = \
 		dict_int	\
 		dict_xsyn	\
 		earthdistance	\
+		entra_validator	\
 		file_fdw	\
 		fuzzystrmatch	\
 		hstore		\
