@@ -1,0 +1,36 @@
+#! /usr/bin/env python3
+
+import argparse
+import os
+import sys
+
+
+def read_token(fd):
+    token = None
+
+    with os.fdopen(fd) as f:
+        for line in f:
+            if token is not None:
+                raise RuntimeError("multiple tokens provided via --token-fd")
+
+            token = line
+
+    return token
+
+
+def validate(token):
+    sys.exit("validation not implemented")
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="entra_validator", add_help=False)
+    parser.add_argument("--token-fd", type=int, required=True)
+
+    args = parser.parse_args(argv[1:])
+
+    token = read_token(args.token_fd)
+    validate(token)
+
+
+if __name__ == "__main__":
+    main(sys.argv)
