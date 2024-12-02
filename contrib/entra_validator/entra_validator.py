@@ -11,7 +11,6 @@ import urllib.request
 import jwt
 from jwt import PyJWKClient
 
-
 JWKS_URI = "https://login.microsoftonline.com/d1eec608-476a-4b93-9fa4-c2511bdd5ad2/discovery/v2.0/keys"
 AUDIENCE = "32def7d1-46be-474f-b5d6-83a181270401"
 
@@ -32,7 +31,7 @@ def read_token(fd):
     return token
 
 
-def validate(token, *, issuer) -> dict:
+def validate(token, *, issuer, required_scopes) -> dict:
     """
     Validates the token against the supplied --issuer, per the MS instructions
     at
@@ -65,7 +64,7 @@ def validate(token, *, issuer) -> dict:
         audience=AUDIENCE,
         strict_aud=True,
         issuer=issuer,
-        require=["exp", "iat", "tid"],
+        require=["exp", "iat", "tid", "scp"],
     )
     print(claims, file=sys.stderr)
 
@@ -75,6 +74,11 @@ def validate(token, *, issuer) -> dict:
     if not urllib.parse.urlparse(issuer).path.startswith(f"/{tid}/"):
         raise RuntimeError(f"token's tid claim does not match issuer {issuer}")
 
+    # Split apart the scope claim and make sure our list is contained.
+    scopes = claims["scp"].split()
+    if not set(required_scopes).issubset(scopes):
+        raise RuntimeError(f"token does not claim required scopes {required_scopes}")
+
     return claims
 
 
@@ -82,11 +86,12 @@ def main(argv):
     parser = argparse.ArgumentParser(prog="entra_validator", add_help=False)
     parser.add_argument("--token-fd", type=int, required=True)
     parser.add_argument("--issuer", type=str, required=True)
+    parser.add_argument("--required-scopes", dest="scopes", type=str)
 
     args = parser.parse_args(argv[1:])
 
     token = read_token(args.token_fd)
-    claims = validate(token, issuer=args.issuer)
+    claims = validate(token, issuer=args.issuer, required_scopes=args.scopes.split())
 
     # Print out the identity of the user.
     authn_id = claims["oid"]

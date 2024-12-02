@@ -30,6 +30,8 @@ static bool check_exit(FILE **fh, const char *command);
 static bool set_cloexec(int fd);
 static char *find_entra_validator_script(void);
 
+static char *entra_scopes = "";
+
 static const OAuthValidatorCallbacks validator_callbacks = {
 	.validate_cb = validate_token,
 };
@@ -77,7 +79,8 @@ run_validator_command(Port *port, const char *token, char **authn_id)
 	wfd = pipefd[1];
 
 	cmd = find_entra_validator_script();
-	cmd = psprintf("%s --token-fd %d --issuer '%s'", cmd, rfd, issuer);
+	cmd = psprintf("%s --token-fd %d --issuer '%s' --required-scopes '%s'",
+				   cmd, rfd, issuer, entra_scopes);
 
 	if (!set_cloexec(wfd))
 	{
@@ -268,4 +271,19 @@ validate_token(ValidatorModuleState *state, const char *token, const char *role)
 		res->authorized = true;
 
 	return res;
+}
+
+void
+_PG_init(void)
+{
+	DefineCustomStringVariable("entra_validator.required_scopes",
+							   "List of required OAuth scope identifiers",
+							   NULL,
+							   &entra_scopes,
+							   "",
+							   PGC_SIGHUP,
+							   0,
+							   NULL, NULL, NULL);
+
+	MarkGUCPrefixReserved("entra_validator");
 }
