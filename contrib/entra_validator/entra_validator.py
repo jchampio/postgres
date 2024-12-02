@@ -86,7 +86,13 @@ def main(argv):
     args = parser.parse_args(argv[1:])
 
     token = read_token(args.token_fd)
-    validate(token, issuer=args.issuer)
+    claims = validate(token, issuer=args.issuer)
+
+    # Print out the identity of the user.
+    authn_id = claims["oid"]
+    if "preferred_username" in claims:
+        authn_id += ":" + claims["preferred_username"]
+    print(authn_id)
 
 
 if __name__ == "__main__":
