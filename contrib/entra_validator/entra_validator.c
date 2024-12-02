@@ -228,8 +228,7 @@ set_cloexec(int fd)
 
 /*
  * Returns the path to the entra_validator script, which should be next to this
- * validator library and named the same except that it doesn't have an
- * extension.
+ * validator library, with the same basename, and a .py extension.
  *
  * XXX Only works on *nix.
  */
@@ -246,13 +245,15 @@ find_entra_validator_script(void)
 
 	script_path = pstrdup(info.dli_fname);
 
-	/* Chop off the shared object extension to form our script path. */
+	/* Replace the shared object extension to form our script path. */
 	dot = strrchr(script_path, '.');
-	if (!dot)
+	if (!dot || strlen(dot) < 3)
 		ereport(ERROR,
 				errmsg("unable to form script path from \"%s\"", script_path));
 
-	*dot = '\0';
+	dot[1] = 'p';
+	dot[2] = 'y';
+	dot[3] = '\0';
 
 	return script_path;
 }
