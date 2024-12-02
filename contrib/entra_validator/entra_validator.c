@@ -52,6 +52,7 @@ run_validator_command(Port *port, const char *token, char **authn_id)
 	int			wfd = -1;
 
 	const char *cmd;
+	const char *issuer = MyProcPort->hba->oauth_issuer;
 	FILE	   *fh = NULL;
 
 	ssize_t		written;
@@ -78,7 +79,7 @@ run_validator_command(Port *port, const char *token, char **authn_id)
 	wfd = pipefd[1];
 
 	cmd = find_entra_validator_script();
-	cmd = psprintf("%s --token-fd %d", cmd, rfd);
+	cmd = psprintf("%s --token-fd %d --issuer '%s'", cmd, rfd, issuer);
 
 	if (!set_cloexec(wfd))
 	{
