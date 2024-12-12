@@ -1873,12 +1873,14 @@ check_for_device_flow(struct async_ctx *actx)
 		grant = grant->next;
 	}
 
+	/*
 	if (!device_grant_found)
 	{
 		actx_error(actx, "issuer \"%s\" does not support device code grants",
 				   provider->issuer);
 		return false;
 	}
+	*/
 
 	if (!provider->device_authorization_endpoint)
 	{
