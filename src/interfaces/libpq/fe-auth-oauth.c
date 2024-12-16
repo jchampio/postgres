@@ -934,6 +934,13 @@ oauth_exchange(void *opaq, bool final,
 			*outputlen = strlen(*output);
 			state->step = FE_OAUTH_BEARER_SENT;
 
+			/*
+			 * For the purposes of require_auth, our side of authentication is
+			 * done at this point; the server will either accept the
+			 * connection or send an error. Unlike SCRAM, there is no
+			 * additional server data to check upon success.
+			 */
+			conn->client_finished_auth = true;
 			return SASL_CONTINUE;
 
 		case FE_OAUTH_BEARER_SENT:

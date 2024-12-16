@@ -510,6 +510,8 @@ struct pg_conn
 								 * the server? */
 	uint32		allowed_auth_methods;	/* bitmask of acceptable AuthRequest
 										 * codes */
+	const pg_fe_sasl_mech *allowed_sasl_mechs[2];	/* and acceptable SASL
+													 * mechanisms */
 	bool		client_finished_auth;	/* have we finished our half of the
 										 * authentication exchange? */
 	char		current_auth_response;	/* used by pqTraceOutputMessage to

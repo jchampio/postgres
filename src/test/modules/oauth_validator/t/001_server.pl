@@ -145,6 +145,60 @@ $node->connect_fails(
 	  qr@server's discovery document at \Q$issuer/.well-known/oauth-authorization-server/alternate\E \(issuer "\Q$issuer/alternate\E"\) is incompatible with oauth_issuer \(\Q$issuer\E\)@
 );
 
+# Test require_auth settings against OAUTHBEARER.
+my @cases = (
+	{ require_auth => "oauth" },
+	{ require_auth => "oauth,scram-sha-256" },
+	{ require_auth => "password,oauth" },
+	{ require_auth => "none,oauth" },
+	{ require_auth => "!scram-sha-256" },
+	{ require_auth => "!none" },
+
+	{
+		require_auth => "!oauth",
+		failure => qr/server requested OAUTHBEARER authentication/
+	},
+	{
+		require_auth => "scram-sha-256",
+		failure => qr/server requested OAUTHBEARER authentication/
+	},
+	{
+		require_auth => "!password,!oauth",
+		failure => qr/server requested OAUTHBEARER authentication/
+	},
+	{
+		require_auth => "none",
+		failure => qr/server requested SASL authentication/
+	},
+	{
+		require_auth => "!oauth,!scram-sha-256",
+		failure => qr/server requested SASL authentication/
+	});
+
+$user = "test";
+foreach my $c (@cases)
+{
+	my $connstr =
+	  "user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id=f02c6361-0635 require_auth=$c->{'require_auth'}";
+
+	if (defined $c->{'failure'})
+	{
+		$node->connect_fails(
+			$connstr,
+			"require_auth=$c->{'require_auth'} fails",
+			expected_stderr => $c->{'failure'});
+	}
+	else
+	{
+		$node->connect_ok(
+			$connstr,
+			"require_auth=$c->{'require_auth'} succeeds",
+			expected_stderr =>
+			  qr@Visit https://example\.com/ and enter the code: postgresuser@
+		);
+	}
+}
+
 # Make sure the client_id and secret are correctly encoded. $vschars contains
 # every allowed character for a client_id/_secret (the "VSCHAR" class).
 # $vschars_esc is additionally backslash-escaped for inclusion in a
@@ -155,15 +209,15 @@ my $vschars_esc =
   " !\"#\$%&\\'()*+,-./0123456789:;<=>?\@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 $node->connect_ok(
-	"user=$user dbname=postgres oauth_issuer=$issuer/alternate oauth_client_id='$vschars_esc'",
+	"user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id='$vschars_esc'",
 	"escapable characters: client_id",
 	expected_stderr =>
-	  qr@Visit https://example\.org/ and enter the code: postgresuser@);
+	  qr@Visit https://example\.com/ and enter the code: postgresuser@);
 $node->connect_ok(
-	"user=$user dbname=postgres oauth_issuer=$issuer/alternate oauth_client_id='$vschars_esc' oauth_client_secret='$vschars_esc'",
+	"user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id='$vschars_esc' oauth_client_secret='$vschars_esc'",
 	"escapable characters: client_id and secret",
 	expected_stderr =>
-	  qr@Visit https://example\.org/ and enter the code: postgresuser@);
+	  qr@Visit https://example\.com/ and enter the code: postgresuser@);
 
 #
 # Further tests rely on support for specific behaviors in oauth_server.py. To
