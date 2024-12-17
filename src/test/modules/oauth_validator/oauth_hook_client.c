@@ -19,10 +19,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef WIN32
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#endif
+
 #include "getopt_long.h"
 #include "libpq-fe.h"
 
 static int	handle_auth_data(PGauthData type, PGconn *conn, void *data);
+static PostgresPollingStatusType async_cb(PGconn *conn,
+										  PGoauthBearerRequest *req,
+										  pgsocket *altsock);
 
 static void
 usage(char *argv[])
@@ -34,10 +43,13 @@ usage(char *argv[])
 	fprintf(stderr, " --expected-scope SCOPE	fail if received scopes do not match SCOPE\n");
 	fprintf(stderr, " --expected-uri URI		fail if received configuration link does not match URI\n");
 	fprintf(stderr, " --no-hook					don't install OAuth hooks (connection will fail)\n");
+	fprintf(stderr, " --hang-forever			don't ever return a token (combine with connect_timeout)\n");
 	fprintf(stderr, " --token TOKEN				use the provided TOKEN value\n");
 }
 
+/* --options */
 static bool no_hook = false;
+static bool hang_forever = false;
 static const char *expected_uri = NULL;
 static const char *expected_scope = NULL;
 static char *token = NULL;
@@ -52,6 +64,7 @@ main(int argc, char *argv[])
 		{"expected-uri", required_argument, NULL, 1001},
 		{"no-hook", no_argument, NULL, 1002},
 		{"token", required_argument, NULL, 1003},
+		{"hang-forever", no_argument, NULL, 1004},
 		{0}
 	};
 
@@ -81,6 +94,10 @@ main(int argc, char *argv[])
 
 			case 1003:			/* --token */
 				token = optarg;
+				break;
+
+			case 1004:			/* --hang-forever */
+				hang_forever = true;
 				break;
 
 			default:
@@ -127,6 +144,13 @@ handle_auth_data(PGauthData type, PGconn *conn, void *data)
 	if (no_hook || (type != PQAUTHDATA_OAUTH_BEARER_TOKEN))
 		return 0;
 
+	if (hang_forever)
+	{
+		/* Start asynchronous processing. */
+		req->async = async_cb;
+		return 1;
+	}
+
 	if (expected_uri)
 	{
 		if (!req->openid_configuration)
@@ -159,4 +183,46 @@ handle_auth_data(PGauthData type, PGconn *conn, void *data)
 
 	req->token = token;
 	return 1;
+}
+
+static PostgresPollingStatusType
+async_cb(PGconn *conn, PGoauthBearerRequest *req, pgsocket *altsock)
+{
+	if (hang_forever)
+	{
+		/*
+		 * This code tests that nothing is interfering with libpq's handling
+		 * of connect_timeout.
+		 */
+		static pgsocket sock = PGINVALID_SOCKET;
+
+		if (sock == PGINVALID_SOCKET)
+		{
+			/* First call. Create an unbound socket to wait on. */
+#ifdef WIN32
+			WSADATA		wsaData;
+			int			err;
+
+			err = WSAStartup(MAKEWORD(2, 2), &wsaData);
+			if (err)
+			{
+				perror("WSAStartup failed");
+				return PGRES_POLLING_FAILED;
+			}
+#endif
+			sock = socket(AF_INET, SOCK_DGRAM, 0);
+			if (sock == PGINVALID_SOCKET)
+			{
+				perror("failed to create datagram socket");
+				return PGRES_POLLING_FAILED;
+			}
+		}
+
+		/* Make libpq wait on the (unreadable) socket. */
+		*altsock = sock;
+		return PGRES_POLLING_READING;
+	}
+
+	req->token = token;
+	return PGRES_POLLING_OK;
 }

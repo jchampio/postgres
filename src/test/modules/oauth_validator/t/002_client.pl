@@ -115,4 +115,11 @@ if ($ENV{with_libcurl} ne 'yes')
 	);
 }
 
+# connect_timeout should work if the flow doesn't respond.
+$common_connstr = "$common_connstr connect_timeout=1";
+test(
+	"connect_timeout interrupts hung client flow",
+	flags => ["--hang-forever"],
+	expected_stderr => qr/failed: timeout expired/);
+
 done_testing();
