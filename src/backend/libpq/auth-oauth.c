@@ -668,14 +668,23 @@ validate(Port *port, const char *auth)
 		return false;
 	}
 
+	/*
+	 * Log any authentication results even if the token isn't authorized; it
+	 * might be useful for auditing or troubleshooting.
+	 */
+	if (ret->authn_id)
+		set_authn_id(port, ret->authn_id);
+
 	if (!ret->authorized)
 	{
+		ereport(LOG,
+				errmsg("OAuth bearer authentication failed for user \"%s\"",
+					   port->user_name),
+				errdetail_log("Validator failed to authorize the provided token."));
+
 		status = false;
 		goto cleanup;
 	}
-
-	if (ret->authn_id)
-		set_authn_id(port, ret->authn_id);
 
 	if (port->hba->oauth_skip_usermap)
 	{

@@ -74,8 +74,7 @@ local all testparam oauth issuer="$issuer/param" scope="openid postgres"
 });
 $node->reload;
 
-my ($log_start, $log_end);
-$log_start = $node->wait_for_log(qr/reloading configuration files/);
+my $log_start = $node->wait_for_log(qr/reloading configuration files/);
 
 
 # To test against HTTP rather than HTTPS, we need to enable PGOAUTHDEBUG. But
@@ -90,52 +89,32 @@ $node->connect_fails(
 $ENV{PGOAUTHDEBUG} = "UNSAFE";
 
 my $user = "test";
-if ($node->connect_ok(
-		"user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id=f02c6361-0635",
-		"connect",
-		expected_stderr =>
-		  qr@Visit https://example\.com/ and enter the code: postgresuser@))
-{
-	$log_end = $node->wait_for_log(qr/connection authorized/, $log_start);
-	$node->log_check(
-		"user $user: validator receives correct parameters",
-		$log_start,
-		log_like => [
-			qr/oauth_validator: token="9243959234", role="$user"/,
-			qr/oauth_validator: issuer="\Q$issuer\E", scope="openid postgres"/,
-		]);
-	$node->log_check(
-		"user $user: validator sets authenticated identity",
-		$log_start,
-		log_like =>
-		  [ qr/connection authenticated: identity="test" method=oauth/, ]);
-	$log_start = $log_end;
-}
+$node->connect_ok(
+	"user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id=f02c6361-0635",
+	"connect as test",
+	expected_stderr =>
+	  qr@Visit https://example\.com/ and enter the code: postgresuser@,
+	log_like => [
+		qr/oauth_validator: token="9243959234", role="$user"/,
+		qr/oauth_validator: issuer="\Q$issuer\E", scope="openid postgres"/,
+		qr/connection authenticated: identity="test" method=oauth/,
+		qr/connection authorized/,
+	]);
 
 # The /alternate issuer uses slightly different parameters, along with an
 # OAuth-style discovery document.
 $user = "testalt";
-if ($node->connect_ok(
-		"user=$user dbname=postgres oauth_issuer=$issuer/alternate oauth_client_id=f02c6361-0636",
-		"connect",
-		expected_stderr =>
-		  qr@Visit https://example\.org/ and enter the code: postgresuser@))
-{
-	$log_end = $node->wait_for_log(qr/connection authorized/, $log_start);
-	$node->log_check(
-		"user $user: validator receives correct parameters",
-		$log_start,
-		log_like => [
-			qr/oauth_validator: token="9243959234-alt", role="$user"/,
-			qr|oauth_validator: issuer="\Q$issuer/alternate\E", scope="openid postgres alt"|,
-		]);
-	$node->log_check(
-		"user $user: validator sets authenticated identity",
-		$log_start,
-		log_like =>
-		  [ qr/connection authenticated: identity="testalt" method=oauth/, ]);
-	$log_start = $log_end;
-}
+$node->connect_ok(
+	"user=$user dbname=postgres oauth_issuer=$issuer/alternate oauth_client_id=f02c6361-0636",
+	"connect as testalt",
+	expected_stderr =>
+	  qr@Visit https://example\.org/ and enter the code: postgresuser@,
+	log_like => [
+		qr/oauth_validator: token="9243959234-alt", role="$user"/,
+		qr|oauth_validator: issuer="\Q$issuer/.well-known/oauth-authorization-server/alternate\E", scope="openid postgres alt"|,
+		qr/connection authenticated: identity="testalt" method=oauth/,
+		qr/connection authorized/,
+	]);
 
 # The issuer linked by the server must match the client's oauth_issuer setting.
 $node->connect_fails(
@@ -411,31 +390,41 @@ $node->connect_fails(
 $common_connstr =
   "dbname=postgres oauth_issuer=$issuer/.well-known/openid-configuration oauth_scope='' oauth_client_id=f02c6361-0635";
 
+# Misbehaving validators must fail shut.
 $bgconn->query_safe("ALTER SYSTEM SET oauth_validator.authn_id TO ''");
 $node->reload;
 $log_start =
   $node->wait_for_log(qr/reloading configuration files/, $log_start);
 
-if ($node->connect_fails(
-		"$common_connstr user=test",
-		"validator must set authn_id",
-		expected_stderr => qr/OAuth bearer authentication failed/))
-{
-	$log_end =
-	  $node->wait_for_log(qr/FATAL:\s+OAuth bearer authentication failed/,
-		$log_start);
+$node->connect_fails(
+	"$common_connstr user=test",
+	"validator must set authn_id",
+	expected_stderr => qr/OAuth bearer authentication failed/,
+	log_like => [
+		qr/connection authenticated: identity=""/,
+		qr/DETAIL:\s+Validator provided no identity/,
+		qr/FATAL:\s+OAuth bearer authentication failed/,
+	]);
 
-	$node->log_check(
-		"validator must set authn_id: breadcrumbs are logged",
-		$log_start,
-		log_like => [
-			qr/connection authenticated: identity=""/,
-			qr/DETAIL:\s+Validator provided no identity/,
-			qr/FATAL:\s+OAuth bearer authentication failed/,
-		]);
+# Even if a validator authenticates the user, if the token isn't considered
+# valid, the connection fails.
+$bgconn->query_safe(
+	"ALTER SYSTEM SET oauth_validator.authn_id TO 'test\@example.org'");
+$bgconn->query_safe(
+	"ALTER SYSTEM SET oauth_validator.authorize_tokens TO false");
+$node->reload;
+$log_start =
+  $node->wait_for_log(qr/reloading configuration files/, $log_start);
 
-	$log_start = $log_end;
-}
+$node->connect_fails(
+	"$common_connstr user=test",
+	"validator must authorize token explicitly",
+	expected_stderr => qr/OAuth bearer authentication failed/,
+	log_like => [
+		qr/connection authenticated: identity="test\@example\.org"/,
+		qr/DETAIL:\s+Validator failed to authorize the provided token/,
+		qr/FATAL:\s+OAuth bearer authentication failed/,
+	]);
 
 #
 # Test user mapping.
@@ -459,6 +448,7 @@ local all testparam oauth issuer="$issuer" scope="" delegate_ident_mapping=1
 
 # To start, have the validator use the role names as authn IDs.
 $bgconn->query_safe("ALTER SYSTEM RESET oauth_validator.authn_id");
+$bgconn->query_safe("ALTER SYSTEM RESET oauth_validator.authorize_tokens");
 
 $node->reload;
 $log_start =
@@ -532,14 +522,12 @@ $log_start = $node->wait_for_log(qr/ready to accept connections/, $log_start);
 
 # The test user should work as before.
 $user = "test";
-if ($node->connect_ok(
-		"user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id=f02c6361-0635",
-		"validator is used for $user",
-		expected_stderr =>
-		  qr@Visit https://example\.com/ and enter the code: postgresuser@))
-{
-	$log_start = $node->wait_for_log(qr/connection authorized/, $log_start);
-}
+$node->connect_ok(
+	"user=$user dbname=postgres oauth_issuer=$issuer oauth_client_id=f02c6361-0635",
+	"validator is used for $user",
+	expected_stderr =>
+	  qr@Visit https://example\.com/ and enter the code: postgresuser@,
+	log_like => [qr/connection authorized/]);
 
 # testalt should be routed through the fail_validator.
 $user = "testalt";

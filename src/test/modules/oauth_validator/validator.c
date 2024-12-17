@@ -34,7 +34,9 @@ static const OAuthValidatorCallbacks validator_callbacks = {
 	.validate_cb = validate_token
 };
 
+/* GUCs */
 static char *authn_id = NULL;
+static bool authorize_tokens = true;
 
 /*---
  * Extension entry point. Sets up GUCs for use by tests:
@@ -42,6 +44,10 @@ static char *authn_id = NULL;
  * - oauth_validator.authn_id	Sets the user identifier to return during token
  *								validation. Defaults to the username in the
  *								startup packet.
+ *
+ * - oauth_validator.authorize_tokens
+ *								Sets whether to successfully validate incoming
+ *								tokens. Defaults to true.
  */
 void
 _PG_init(void)
@@ -54,6 +60,14 @@ _PG_init(void)
 							   PGC_SIGHUP,
 							   0,
 							   NULL, NULL, NULL);
+	DefineCustomBoolVariable("oauth_validator.authorize_tokens",
+							 "Should tokens be marked valid?",
+							 NULL,
+							 &authorize_tokens,
+							 true,
+							 PGC_SIGHUP,
+							 0,
+							 NULL, NULL, NULL);
 
 	MarkGUCPrefixReserved("oauth_validator");
 }
@@ -91,8 +105,8 @@ validator_shutdown(ValidatorModuleState *state)
 }
 
 /*
- * Validator implementation. Logs the incoming data and authorizes the token;
- * the behavior can be modified via the module's GUC settings.
+ * Validator implementation. Logs the incoming data and authorizes the token by
+ * default; the behavior can be modified via the module's GUC settings.
  */
 static ValidatorModuleResult *
 validate_token(ValidatorModuleState *state, const char *token, const char *role)
@@ -111,7 +125,7 @@ validate_token(ValidatorModuleState *state, const char *token, const char *role)
 		 MyProcPort->hba->oauth_issuer,
 		 MyProcPort->hba->oauth_scope);
 
-	res->authorized = true;
+	res->authorized = authorize_tokens;
 	if (authn_id)
 		res->authn_id = pstrdup(authn_id);
 	else
