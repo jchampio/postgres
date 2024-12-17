@@ -771,7 +771,7 @@ typedef struct _PGoauthBearerRequest
 	 */
 	PostgresPollingStatusType (*async) (PGconn *conn,
 										struct _PGoauthBearerRequest *request,
-										SOCKTYPE *altsock);
+										SOCKTYPE * altsock);
 
 	/*
 	 * Callback to clean up custom allocations. A hook implementation may use
