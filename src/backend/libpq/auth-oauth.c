@@ -546,15 +546,13 @@ generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen)
  * The "credentials" construction is what we receive in our auth value.
  *
  * Since that spec is subordinate to HTTP (i.e. the HTTP Authorization
- * header format; RFC 7235 Sec. 2), the "Bearer" scheme string must be
- * compared case-insensitively. (This is not mentioned in RFC 6750, but
- * it's pointed out in RFC 7628 Sec. 4.)
+ * header format; RFC 9110 Sec. 11), the "Bearer" scheme string must be
+ * compared case-insensitively. (This is not mentioned in RFC 6750, but the
+ * OAUTHBEARER spec points it out: RFC 7628 Sec. 4.)
  *
  * Invalid formats are technically a protocol violation, but we shouldn't
  * reflect any information about the sensitive Bearer token back to the
  * client; log at COMMERROR instead.
- *
- * TODO: handle the Authorization spec, RFC 7235 Sec. 2.1.
  */
 static const char *
 validate_token_format(const char *header)
