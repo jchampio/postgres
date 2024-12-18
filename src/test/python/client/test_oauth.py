@@ -255,7 +255,8 @@ class OpenIDProvider(threading.Thread):
                 "subject_types_supported": ["public"],
                 "id_token_signing_alg_values_supported": ["RS256"],
                 "grant_types_supported": [
-                    "urn:ietf:params:oauth:grant-type:device_code"
+                    "authorization_code",
+                    "urn:ietf:params:oauth:grant-type:device_code",
                 ],
             }
 
