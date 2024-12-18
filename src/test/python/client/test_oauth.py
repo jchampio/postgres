@@ -283,6 +283,17 @@ class OpenIDProvider(threading.Thread):
                 # that break the HTTP protocol. Just return and have the server
                 # close the socket.
                 return
+            except ssl.SSLError as err:
+                # FIXME OpenSSL 3.4 introduced an incompatibility with Python's
+                # TLS error handling, resulting in a bogus "[SYS] unknown error"
+                # on some platforms. Hopefully this is fixed in 2025's set of
+                # maintenance releases and this case can be removed.
+                #
+                #     https://github.com/python/cpython/issues/127257
+                #
+                if "[SYS] unknown error" in str(err):
+                    return
+                raise
 
             super().shutdown_request(request)
 
