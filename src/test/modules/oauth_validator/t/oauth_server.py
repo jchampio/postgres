@@ -264,7 +264,10 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
             "response_types_supported": ["token"],
             "subject_types_supported": ["public"],
             "id_token_signing_alg_values_supported": ["RS256"],
-            "grant_types_supported": ["urn:ietf:params:oauth:grant-type:device_code"],
+            "grant_types_supported": [
+                "authorization_code",
+                "urn:ietf:params:oauth:grant-type:device_code",
+            ],
         }
 
     @property

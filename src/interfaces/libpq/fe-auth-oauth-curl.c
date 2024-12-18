@@ -465,6 +465,23 @@ oauth_json_object_field_start(void *state, char *name, bool isnull)
 
 			++field;
 		}
+
+		/*
+		 * We don't allow duplicate field names; error out if the target has
+		 * already been set.
+		 */
+		if (ctx->active)
+		{
+			field = ctx->active;
+
+			if ((field->type == JSON_TOKEN_ARRAY_START && *field->target.array)
+				|| (field->type != JSON_TOKEN_ARRAY_START && *field->target.scalar))
+			{
+				oauth_parse_set_error(ctx, "field \"%s\" is duplicated",
+									  field->name);
+				return JSON_SEM_ACTION_FAILED;
+			}
+		}
 	}
 
 	return JSON_SUCCESS;
@@ -565,21 +582,10 @@ oauth_json_scalar(void *state, char *token, JsonTokenType type)
 			return JSON_SEM_ACTION_FAILED;
 		}
 
-		/*
-		 * We don't allow duplicate field names; error out if the target has
-		 * already been set.
-		 */
-		if ((field->type == JSON_TOKEN_ARRAY_START && *field->target.array)
-			|| (field->type != JSON_TOKEN_ARRAY_START && *field->target.scalar))
-		{
-			oauth_parse_set_error(ctx, "field \"%s\" is duplicated",
-								  field->name);
-			return JSON_SEM_ACTION_FAILED;
-		}
-
 		if (field->type != JSON_TOKEN_ARRAY_START)
 		{
 			Assert(ctx->nested == 1);
+			Assert(!*field->target.scalar);
 
 			*field->target.scalar = strdup(token);
 			if (!*field->target.scalar)
