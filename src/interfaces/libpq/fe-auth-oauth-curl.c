@@ -1355,10 +1355,8 @@ setup_curl_handles(struct async_ctx *actx)
 
 	/*
 	 * Multi-threaded applications must set CURLOPT_NOSIGNAL. This requires us
-	 * to handle the possibility of SIGPIPE ourselves.
-	 *
-	 * TODO: handle SIGPIPE via pq_block_sigpipe(), or via a
-	 * CURLOPT_SOCKOPTFUNCTION maybe...
+	 * to handle the possibility of SIGPIPE ourselves using pq_block_sigpipe;
+	 * see pg_fe_run_oauth_flow().
 	 */
 	CHECK_SETOPT(actx, CURLOPT_NOSIGNAL, 1L, return false);
 	if (!curl_info->ares_num)
@@ -2225,8 +2223,8 @@ prompt_user(struct async_ctx *actx, PGconn *conn)
 
 
 /*
- * The top-level, nonblocking entry point for the libcurl implementation. This
- * will be called several times to pump the async engine.
+ * The core nonblocking libcurl implementation. This will be called several
+ * times to pump the async engine.
  *
  * The architecture is based on PQconnectPoll(). The first half drives the
  * connection state forward as necessary, returning if we're not ready to
@@ -2238,8 +2236,8 @@ prompt_user(struct async_ctx *actx, PGconn *conn)
  * OAUTH_STEP_TOKEN_REQUEST and OAUTH_STEP_WAIT_INTERVAL to regularly ping the
  * provider.
  */
-PostgresPollingStatusType
-pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
+static PostgresPollingStatusType
+pg_fe_run_oauth_flow_impl(PGconn *conn, pgsocket *altsock)
 {
 	fe_oauth_state *state = conn->sasl_state;
 	struct async_ctx *actx;
@@ -2478,4 +2476,54 @@ error_return:
 	appendPQExpBufferStr(&conn->errorMessage, "\n");
 
 	return PGRES_POLLING_FAILED;
+}
+
+/*
+ * The top-level entry point. This is a convenient place to put necessary
+ * wrapper logic before handing off to the true implementation, above.
+ */
+PostgresPollingStatusType
+pg_fe_run_oauth_flow(PGconn *conn, pgsocket *altsock)
+{
+	PostgresPollingStatusType result;
+#ifndef WIN32
+	sigset_t	osigset;
+	bool		sigpipe_pending;
+	bool		masked;
+
+	/*---
+	 * Ignore SIGPIPE on this thread during all Curl processing.
+	 *
+	 * Because we support multiple threads, we have to set up libcurl with
+	 * CURLOPT_NOSIGNAL, which disables its default global handling of
+	 * SIGPIPE. From the Curl docs:
+	 *
+	 *     libcurl makes an effort to never cause such SIGPIPE signals to
+	 *     trigger, but some operating systems have no way to avoid them and
+	 *     even on those that have there are some corner cases when they may
+	 *     still happen, contrary to our desire.
+	 *
+	 * Note that libcurl is also at the mercy of its DNS resolution and SSL
+	 * libraries; if any of them forget a MSG_NOSIGNAL then we're in trouble.
+	 * Modern platforms and libraries seem to get it right, so this is a
+	 * difficult corner case to exercise in practice, and unfortunately it's
+	 * not really clear whether it's necessary in all cases.
+	 */
+	masked = (pq_block_sigpipe(&osigset, &sigpipe_pending) == 0);
+#endif
+
+	result = pg_fe_run_oauth_flow_impl(conn, altsock);
+
+#ifndef WIN32
+	if (masked)
+	{
+		/*
+		 * Undo the SIGPIPE mask. Assume we may have gotten EPIPE (we have no
+		 * way of knowing at this level).
+		 */
+		pq_reset_sigpipe(&osigset, sigpipe_pending, true /* EPIPE, maybe */ );
+	}
+#endif
+
+	return result;
 }
