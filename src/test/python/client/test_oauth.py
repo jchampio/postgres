@@ -2505,3 +2505,101 @@ def test_oauth_refuses_http(accept, openid_provider, monkeypatch):
     expected_error = r'OAuth discovery URI ".*" must use HTTPS'
     with pytest.raises(psycopg2.OperationalError, match=expected_error):
         client.check_completed()
+
+
+@pytest.fixture
+def listener():
+    """
+    A fixture that returns a listening TCP socket.
+    """
+    listener = socket.create_server(("", 0))
+    listener.listen(1)
+    listener.settimeout(BLOCKING_TIMEOUT)
+
+    with listener:
+        yield listener
+
+
+def test_oauth_client_handles_remote_hangup(accept, certpair, listener):
+    """
+    Make sure an abortive close while writing is handled cleanly, without a
+    SIGPIPE crash.
+    """
+    # We don't set up a real HTTPS server because we want to hang up during the
+    # request.
+    _, port = listener.getsockname()
+    server_sock, client = accept(
+        oauth_issuer=f"https://localhost:{port}/.well-known/openid-configuration",
+        oauth_client_id="some-id",
+        oauth_scope="some-scope",
+    )
+
+    with server_sock:
+        with pq3.wrap(server_sock, debug_stream=sys.stdout) as conn:
+            startup = pq3.recv1(conn, cls=pq3.Startup)
+            assert startup.proto == pq3.protocol(3, 0)
+
+            pq3.send(
+                conn,
+                pq3.types.AuthnRequest,
+                type=pq3.authn.SASL,
+                body=[b"OAUTHBEARER", b""],
+            )
+
+            provider_sock, _ = listener.accept()
+            with provider_sock:
+                # The key to induce EPIPE/SIGPIPE (rather than ECONNRESET or
+                # similar) is to make sure there's no buffered data from the
+                # client when we close the connection. Tricky.
+                #
+                # The approach here is to read the client hello, then cleanly
+                # close as we're sending the server hello back.
+                # SSLContext.wrap_bio() will let us offload the TLS to OpenSSL
+                # while controlling the flow on the wire.
+                ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                ctx.load_cert_chain(*certpair)
+
+                in_bio = ssl.MemoryBIO()
+                out_bio = ssl.MemoryBIO()
+                handshake = ctx.wrap_bio(in_bio, out_bio, server_side=True)
+
+                provider_sock.setblocking(False)
+
+                while True:
+                    try:
+                        handshake.do_handshake()
+
+                    except ssl.SSLWantReadError:
+                        if not out_bio.pending:
+                            # We don't yet have a full client hello. Drain the
+                            # socket into the input buffer.
+                            try:
+                                while b := provider_sock.recv(1024):
+                                    in_bio.write(b)
+                            except BlockingIOError:
+                                pass
+
+                        else:
+                            # We've received the client hello and generated a
+                            # server hello. Cork the socket, buffer the hello,
+                            # close the socket, and break out of the handshake.
+                            # The client should fail at this point.
+                            #
+                            # TODO: any way to do this that doesn't race?
+                            try:
+                                opt = socket.TCP_CORK
+                            except AttributeError:
+                                opt = socket.TCP_NOPUSH
+
+                            provider_sock.setsockopt(socket.IPPROTO_TCP, opt, 1)
+                            provider_sock.send(out_bio.read())
+                            provider_sock.shutdown(socket.SHUT_WR)
+
+                            break
+
+            # FIXME: the client disconnects at this point; it'd be nicer if
+            # it completed the exchange.
+
+    expected_error = r"Failed sending data to the peer.*Broken pipe"
+    with pytest.raises(psycopg2.OperationalError, match=expected_error):
+        client.check_completed()
