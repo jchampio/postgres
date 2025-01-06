@@ -265,7 +265,7 @@ validate_token(ValidatorModuleState *state, const char *token, const char *role)
 {
 	ValidatorModuleResult *res;
 
-	res = palloc(sizeof(ValidatorModuleResult));
+	res = palloc0(sizeof(ValidatorModuleResult));
 
 	if (run_validator_command(MyProcPort, token, &res->authn_id))
 		res->authorized = true;
