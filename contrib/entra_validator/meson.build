@@ -15,3 +15,10 @@ entra_validator = shared_module('entra_validator',
   kwargs: contrib_mod_args,
 )
 contrib_targets += entra_validator
+
+install_data(
+  'entra_validator.py',
+  kwargs: {
+    'install_dir': dir_lib_pkg,
+  },
+)

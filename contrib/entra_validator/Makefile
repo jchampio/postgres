@@ -13,3 +13,9 @@ top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
+
+install: install-entra-script
+
+.PHONY: install-entra-script
+install-entra-script:
+	$(INSTALL_SCRIPT) $(addprefix $(srcdir)/, entra_validator.py) '$(DESTDIR)$(pkglibdir)/'
