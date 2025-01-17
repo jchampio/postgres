@@ -62,9 +62,11 @@ def validate(token, *, issuer, required_scopes) -> dict:
         jwk.key,
         algorithms=["RS256"],
         audience=AUDIENCE,
-        strict_aud=True,
         issuer=issuer,
-        require=["exp", "iat", "tid", "scp"],
+        options=dict(
+            strict_aud=True,
+            require=["exp", "iat", "tid", "scp"],
+        ),
     )
     print(claims, file=sys.stderr)
 
