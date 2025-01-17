@@ -42,6 +42,34 @@ def validate(token, *, issuer, required_scopes) -> dict:
     """
     print(jwt.get_unverified_header(token), file=sys.stderr)
 
+    # Do a dry-run check of the audience and issuer without grabbing the key. If
+    # those don't match, the rest is probably going to fail somewhere, and a
+    # warning in the logs would be helpful.
+    unverified = jwt.decode(
+        token,
+        options=dict(
+            verify_signature=False,
+        ),
+    )
+    if unverified["iss"] != issuer:
+        print(
+            "WARNING: token claims to be issued by an unknown provider",
+            file=sys.stderr,
+        )
+        print(
+            f'DETAIL:  actual: {unverified["iss"]}, expected: {issuer}',
+            file=sys.stderr,
+        )
+    if unverified["aud"] != AUDIENCE:
+        print(
+            "WARNING: token does not appear to have been issued for this application",
+            file=sys.stderr,
+        )
+        print(
+            f'DETAIL:  actual: {unverified["aud"]}, expected: {AUDIENCE}',
+            file=sys.stderr,
+        )
+
     # First fetch the key document and pull the signing material we need for
     # this token.
     # TODO: don't hard-code the URI; get that from discovery instead.
