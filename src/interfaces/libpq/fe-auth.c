@@ -644,7 +644,13 @@ pg_SASL_init(PGconn *conn, int payloadlen, bool *async)
 		/*
 		 * The mechanism should have set up the necessary callbacks; all we
 		 * need to do is signal the caller.
+		 *
+		 * In non-assertion builds, this postcondition is enforced at time of
+		 * use in PQconnectPoll().
 		 */
+		Assert(conn->async_auth);
+		Assert(conn->cleanup_async_auth);
+
 		*async = true;
 		return STATUS_OK;
 	}

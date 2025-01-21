@@ -4139,7 +4139,8 @@ keep_going:						/* We will come back to here until there is
 				if (!conn->async_auth || !conn->cleanup_async_auth)
 				{
 					/* programmer error; should not happen */
-					libpq_append_conn_error(conn, "async authentication has no handler");
+					libpq_append_conn_error(conn,
+											"internal error: async authentication has no handler");
 					goto error_return;
 				}
 
@@ -4154,7 +4155,19 @@ keep_going:						/* We will come back to here until there is
 					/* Done. Tear down the async implementation. */
 					conn->cleanup_async_auth(conn);
 					conn->cleanup_async_auth = NULL;
-					Assert(conn->altsock == PGINVALID_SOCKET);
+
+					/*
+					 * Cleanup must unset altsock, both as an indication that
+					 * it's been released, and to stop pqSocketCheck from
+					 * looking at the wrong socket after async auth is done.
+					 */
+					if (conn->altsock != PGINVALID_SOCKET)
+					{
+						Assert(false);
+						libpq_append_conn_error(conn,
+												"internal error: async cleanup did not release polling socket");
+						goto error_return;
+					}
 
 					/*
 					 * Reenter the authentication exchange with the server. We
@@ -4171,7 +4184,14 @@ keep_going:						/* We will come back to here until there is
 				 * Caller needs to poll some more. conn->async_auth() should
 				 * have assigned an altsock to poll on.
 				 */
-				Assert(conn->altsock != PGINVALID_SOCKET);
+				if (conn->altsock == PGINVALID_SOCKET)
+				{
+					Assert(false);
+					libpq_append_conn_error(conn,
+											"internal error: async authentication did not set a socket for polling");
+					goto error_return;
+				}
+
 				return status;
 			}
 
