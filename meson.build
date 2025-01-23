@@ -865,7 +865,50 @@ if not libcurlopt.disabled()
   libcurl = dependency('libcurl', version: '>= 7.61.0', required: libcurlopt)
   if libcurl.found()
     cdata.set('USE_LIBCURL', 1)
+
+    # Check to see whether the current platform supports threadsafe Curl
+    # initialization.
+    libcurl_threadsafe_init = false
+
+    if not meson.is_cross_build()
+      r = cc.run('''
+        #include <curl/curl.h>
+
+        int main(void)
+        {
+            curl_version_info_data *info;
+
+            if (curl_global_init(CURL_GLOBAL_ALL))
+                return -1;
+
+            info = curl_version_info(CURLVERSION_NOW);
+        #ifdef CURL_VERSION_THREADSAFE
+            if (info->features & CURL_VERSION_THREADSAFE)
+                return 0;
+        #endif
+
+            return 1;
+        }''',
+        name: 'test for curl_global_init thread safety',
+        dependencies: libcurl,
+      )
+
+      assert(r.compiled())
+      if r.returncode() == 0
+        libcurl_threadsafe_init = true
+        message('curl_global_init is threadsafe')
+      elif r.returncode() == 1
+        message('curl_global_init is not threadsafe')
+      else
+        message('curl_global_init failed; assuming not threadsafe')
+      endif
+    endif
+
+    if libcurl_threadsafe_init
+      cdata.set('HAVE_THREADSAFE_CURL_GLOBAL_INIT', 1)
+    endif
   endif
+
 else
   libcurl = not_found_dep
 endif

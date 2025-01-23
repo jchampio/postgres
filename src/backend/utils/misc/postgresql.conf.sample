@@ -122,7 +122,7 @@
 #ssl_passphrase_command_supports_reload = off
 
 # OAuth
-#oauth_validator_libraries = ''
+#oauth_validator_libraries = ''	# comma-separated list of trusted validator modules
 
 
 #------------------------------------------------------------------------------

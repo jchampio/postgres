@@ -445,6 +445,9 @@
 /* Define to 1 if you have the <termios.h> header file. */
 #undef HAVE_TERMIOS_H
 
+/* Define to 1 if curl_global_init() is guaranteed to be threadsafe. */
+#undef HAVE_THREADSAFE_CURL_GLOBAL_INIT
+
 /* Define to 1 if your compiler understands `typeof' or something similar. */
 #undef HAVE_TYPEOF
 

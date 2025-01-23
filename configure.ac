@@ -1021,6 +1021,19 @@ if test "$with_libcurl" = yes ; then
   # to explicitly set TLS 1.3 ciphersuites).
   PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.61.0])
 
+  # We only care about -I, -D, and -L switches;
+  # note that -lcurl will be added by PGAC_CHECK_LIBCURL below.
+  for pgac_option in $LIBCURL_CFLAGS; do
+    case $pgac_option in
+      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+    esac
+  done
+  for pgac_option in $LIBCURL_LIBS; do
+    case $pgac_option in
+      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+    esac
+  done
+
   # OAuth requires python for testing
   if test "$with_python" != yes; then
     AC_MSG_WARN([*** OAuth support tests require --with-python to run])
@@ -1319,7 +1332,7 @@ fi
 # during gss_acquire_cred(). This is possibly related to Curl's Heimdal
 # dependency on that platform?
 if test "$with_libcurl" = yes ; then
-  AC_CHECK_LIB(curl, curl_multi_init, [], [AC_MSG_ERROR([library 'curl' is required for --with-libcurl])])
+  PGAC_CHECK_LIBCURL
 fi
 
 if test "$with_gssapi" = yes ; then
@@ -1614,10 +1627,6 @@ elif test "$with_uuid" = ossp ; then
       [AC_EGREP_HEADER([uuid_export], uuid.h, [],
         [AC_MSG_ERROR([header file <uuid.h> does not match OSSP UUID library])])],
       [AC_MSG_ERROR([header file <ossp/uuid.h> or <uuid.h> is required for OSSP UUID])])])
-fi
-
-if test "$with_libcurl" = yes; then
-  AC_CHECK_HEADER(curl/curl.h, [], [AC_MSG_ERROR([header file <curl/curl.h> is required for --with-libcurl])])
 fi
 
 if test "$PORTNAME" = "win32" ; then
