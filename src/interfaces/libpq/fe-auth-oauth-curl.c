@@ -2234,6 +2234,110 @@ prompt_user(struct async_ctx *actx, PGconn *conn)
 	return true;
 }
 
+/*
+ * Calls curl_global_init() in a thread-safe way.
+ *
+ * libcurl has stringent requirements for the thread context in which you call
+ * curl_global_init(), because it's going to try initializing a bunch of other
+ * libraries (OpenSSL, Winsock, etc). Recent versions of libcurl have improved
+ * the thread-safety situation, but there's a chicken-and-egg problem at
+ * runtime: you can't check the thread safety until you've initialized libcurl,
+ * which you can't do from within a thread unless you know it's thread-safe...
+ *
+ * Returns true if initialization was successful. Successful or not, this
+ * function will not try to reinitialize Curl on successive calls.
+ */
+static bool
+initialize_curl(PGconn *conn)
+{
+	/*
+	 * Don't let the compiler play tricks with this variable. In the
+	 * HAVE_THREADSAFE_CURL_GLOBAL_INIT case, we don't care if two threads
+	 * enter simultaneously, but we do care if this gets set transiently to
+	 * PG_BOOL_YES/NO in cases where that's not the final answer.
+	 */
+	static volatile PGTernaryBool init_successful = PG_BOOL_UNKNOWN;
+#if HAVE_THREADSAFE_CURL_GLOBAL_INIT
+	curl_version_info_data *info;
+#endif
+
+#if !HAVE_THREADSAFE_CURL_GLOBAL_INIT
+	/*
+	 * Lock around the whole function. If a libpq client performs its own work
+	 * with libcurl, it must either ensure that Curl is initialized safely
+	 * before calling us (in which case our call will be a no-op), or else it
+	 * must guard its own calls to curl_global_init() with a registered
+	 * threadlock handler. See PQregisterThreadLock().
+	 */
+	pglock_thread();
+#endif
+
+	/*
+	 * Skip initialization if we've already done it. (Curl tracks the number of
+	 * calls; there's no point in incrementing the counter every time we
+	 * connect.)
+	 */
+	if (init_successful == PG_BOOL_YES)
+		goto done;
+	else if (init_successful == PG_BOOL_NO)
+	{
+		libpq_append_conn_error(conn,
+								"curl_global_init previously failed during OAuth setup");
+		goto done;
+	}
+
+	/*
+	 * We know we've already initialized Winsock by this point (see
+	 * pqMakeEmptyPGconn()), so we should be able to safely skip that bit. But
+	 * we have to tell libcurl to initialize everything else, because other
+	 * pieces of our client executable may already be using libcurl for their
+	 * own purposes. If we initialize libcurl with only a subset of its
+	 * features, we could break those other clients nondeterministically, and
+	 * that would probably be a nightmare to debug.
+	 *
+	 * If some other part of the program has already called this, it's a no-op.
+	 */
+	if (curl_global_init(CURL_GLOBAL_ALL & ~CURL_GLOBAL_WIN32) != CURLE_OK)
+	{
+		libpq_append_conn_error(conn,
+								"curl_global_init failed during OAuth setup");
+		init_successful = PG_BOOL_NO;
+		goto done;
+	}
+
+#if HAVE_THREADSAFE_CURL_GLOBAL_INIT
+	/*
+	 * If we determined at configure time that the Curl installation is
+	 * threadsafe, our job here is much easier. We simply initialize above
+	 * without any locking (concurrent or duplicated calls are fine in that
+	 * situation), then double-check to make sure the runtime setting agrees,
+	 * to try to catch silent downgrades.
+	 */
+	info = curl_version_info(CURLVERSION_NOW);
+	if (!(info->features & CURL_VERSION_THREADSAFE))
+	{
+		/*
+		 * In a downgrade situation, the damage is already done. Curl global
+		 * state may be corrupted. Be noisy.
+		 */
+		libpq_append_conn_error(conn, "libcurl is no longer threadsafe\n"
+								"\tCurl initialization was reported threadsafe when libpq\n"
+								"\twas compiled, but the currently installed version of\n"
+								"\tlibcurl reports that it is not. Recompile libpq against\n"
+								"\tthe installed version of libcurl.");
+		init_successful = PG_BOOL_NO;
+		goto done;
+	}
+#endif
+
+	init_successful = PG_BOOL_YES;
+
+done:
+#if !HAVE_THREADSAFE_CURL_GLOBAL_INIT
+	pgunlock_thread();
+#endif
+	return (init_successful == PG_BOOL_YES);
+}
 
 /*
  * The core nonblocking libcurl implementation. This will be called several
@@ -2255,29 +2359,8 @@ pg_fe_run_oauth_flow_impl(PGconn *conn)
 	fe_oauth_state *state = conn->sasl_state;
 	struct async_ctx *actx;
 
-	/*
-	 * XXX This is not safe. libcurl has stringent requirements for the thread
-	 * context in which you call curl_global_init(), because it's going to try
-	 * initializing a bunch of other libraries (OpenSSL, Winsock...). And we
-	 * probably need to consider both the TLS backend libcurl is compiled
-	 * against and what the user has asked us to do via PQinit[Open]SSL.
-	 *
-	 * Recent versions of libcurl have improved the thread-safety situation,
-	 * but you apparently can't check at compile time whether the
-	 * implementation is thread-safe, and there's a chicken-and-egg problem
-	 * where you can't check the thread safety until you've initialized
-	 * libcurl, which you can't do before you've made sure it's thread-safe...
-	 *
-	 * We know we've already initialized Winsock by this point, so we should
-	 * be able to safely skip that bit. But we have to tell libcurl to
-	 * initialize everything else, because other pieces of our client
-	 * executable may already be using libcurl for their own purposes. If we
-	 * initialize libcurl first, with only a subset of its features, we could
-	 * break those other clients nondeterministically, and that would probably
-	 * be a nightmare to debug.
-	 */
-	curl_global_init(CURL_GLOBAL_ALL
-					 & ~CURL_GLOBAL_WIN32); /* we already initialized Winsock */
+	if (!initialize_curl(conn))
+		return PGRES_POLLING_FAILED;
 
 	if (!state->async_ctx)
 	{
