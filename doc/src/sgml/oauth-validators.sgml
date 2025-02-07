@@ -41,7 +41,9 @@
   <sect2 id="oauth-validator-design-responsibilities">
    <title>Validator Responsibilities</title>
    <para>
-    TODO
+    Although different modules may take very different approaches to token
+    validation, implementations generally need to perform three separate
+    actions:
    </para>
    <variablelist>
     <varlistentry>
@@ -120,6 +122,11 @@
         </para>
        </footnote>
        if users are not prompted for additional scopes.
+      </para>
+      <para>
+       Even if authorization fails, a module may choose to continue to pull
+       authentication information from the token for use in auditing and
+       debugging.
       </para>
      </listitem>
     </varlistentry>

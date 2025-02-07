@@ -10133,8 +10133,46 @@ void PQinitSSL(int do_ssl);
   <title>OAuth Support</title>
 
   <para>
-   TODO
+   libpq implements support for the OAuth v2 Device Authorization client flow,
+   documented in
+   <ulink url="https://datatracker.ietf.org/doc/html/rfc8628">RFC 8628</ulink>,
+   which it will attempt to use by default if the server
+   <link linkend="auth-oauth">requests a bearer token</link> during
+   authentication. This flow can be utilized even if the system running the
+   client application does not have a usable web browser, for example when
+   running a client via SSH. Client applications may implement their own flows
+   instead; see <xref linkend="libpq-oauth-authdata-hooks"/>.
   </para>
+  <para>
+   The builtin flow will, by default, print a URL to visit and a user code to
+   enter there:
+<programlisting>
+$ psql 'dbname=postgres oauth_issuer=https://example.com oauth_client_id=...'
+Visit https://example.com/device and enter the code: ABCD-EFGH
+</programlisting>
+   (This prompt may be
+   <link linkend="libpq-oauth-authdata-prompt-oauth-device">customized</link>.)
+   You will then log into your OAuth provider, which will ask whether you want
+   to allow libpq and the server to perform actions on your behalf. It is always
+   a good idea to carefully review the URL and permissions displayed, to ensure
+   they match your expectations, before continuing. Do not give permissions to
+   untrusted third parties.
+  </para>
+  <para>
+   For an OAuth client flow to be usable, the connection string must at minimum
+   contain <xref linkend="libpq-connect-oauth-issuer"/> and
+   <xref linkend="libpq-connect-oauth-client-id"/>. (These settings are
+   determined by your organization's OAuth provider.) The builtin flow
+   additionally requires the OAuth authorization server to publish a device
+   authorization endpoint.
+  </para>
+
+  <note>
+   <para>
+    The builtin Device Authorization flow is not currently supported on Windows.
+    Custom client flows may still be implemented.
+   </para>
+  </note>
 
   <sect2 id="libpq-oauth-authdata-hooks">
    <title>Authdata Hooks</title>
