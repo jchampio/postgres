@@ -14,11 +14,17 @@ use MIME::Base64 qw(encode_base64);
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
+use Config;
 
 use FindBin;
 use lib $FindBin::RealBin;
 
 use OAuth::Server;
+
+if ($Config{osname} eq 'MSWin32')
+{
+	plan skip_all => 'OAuth server-side tests are not supported on Windows';
+}
 
 if (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\boauth\b/)
 {
@@ -402,7 +408,10 @@ note "running '" . join("' '", @cmd) . "'";
 my ($stdout, $stderr) = run_command(\@cmd);
 
 like($stdout, qr/connection succeeded/, "stress-async: stdout matches");
-unlike($stderr, qr/connection to database failed/, "stress-async: stderr matches");
+unlike(
+	$stderr,
+	qr/connection to database failed/,
+	"stress-async: stderr matches");
 
 #
 # This section of tests reconfigures the validator module itself, rather than
