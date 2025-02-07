@@ -656,9 +656,9 @@ validate(Port *port, const char *auth)
 				errmsg("validation of OAuth token requested without a validator loaded"));
 
 	/* Call the validation function from the validator module */
-	ret = ValidatorCallbacks->validate_cb(validator_module_state,
-										  token, port->user_name);
-	if (ret == NULL)
+	ret = palloc0(sizeof(ValidatorModuleResult));
+	if (!ValidatorCallbacks->validate_cb(validator_module_state, token,
+										 port->user_name, ret))
 	{
 		ereport(LOG, errmsg("internal error in OAuth validator module"));
 		return false;
@@ -756,8 +756,22 @@ load_validator_library(const char *libname)
 	ValidatorCallbacks = (*validator_init) ();
 	Assert(ValidatorCallbacks);
 
+	/*
+	 * Check the magic number, to protect against break-glass scenarios where
+	 * the ABI must change within a major version. load_external_function()
+	 * already checks for compatibility across major versions.
+	 */
+	if (ValidatorCallbacks->magic != PG_OAUTH_VALIDATOR_MAGIC)
+		ereport(ERROR,
+				errmsg("%s module \"%s\": magic number mismatch",
+					   "OAuth validator", libname),
+				errdetail("Server has magic number 0x%08X, module has 0x%08X.",
+						  PG_OAUTH_VALIDATOR_MAGIC, ValidatorCallbacks->magic));
+
 	/* Allocate memory for validator library private state data */
 	validator_module_state = (ValidatorModuleState *) palloc0(sizeof(ValidatorModuleState));
+	validator_module_state->sversion = PG_VERSION_NUM;
+
 	if (ValidatorCallbacks->startup_cb != NULL)
 		ValidatorCallbacks->startup_cb(validator_module_state);
 

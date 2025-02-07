@@ -23,12 +23,15 @@ PG_MODULE_MAGIC;
 
 static void validator_startup(ValidatorModuleState *state);
 static void validator_shutdown(ValidatorModuleState *state);
-static ValidatorModuleResult *validate_token(ValidatorModuleState *state,
-											 const char *token,
-											 const char *role);
+static bool validate_token(const ValidatorModuleState *state,
+						   const char *token,
+						   const char *role,
+						   ValidatorModuleResult *result);
 
 /* Callback implementations (exercise all three) */
 static const OAuthValidatorCallbacks validator_callbacks = {
+	PG_OAUTH_VALIDATOR_MAGIC,
+
 	.startup_cb = validator_startup,
 	.shutdown_cb = validator_shutdown,
 	.validate_cb = validate_token
@@ -89,6 +92,13 @@ _PG_oauth_validator_module_init(void)
 static void
 validator_startup(ValidatorModuleState *state)
 {
+	/*
+	 * Make sure the server is correctly setting sversion. (Real modules
+	 * should not do this; it would defeat upgrade compatibility.)
+	 */
+	if (state->sversion != PG_VERSION_NUM)
+		elog(ERROR, "oauth_validator: sversion set to %d", state->sversion);
+
 	state->private_data = PRIVATE_COOKIE;
 }
 
@@ -108,17 +118,15 @@ validator_shutdown(ValidatorModuleState *state)
  * Validator implementation. Logs the incoming data and authorizes the token by
  * default; the behavior can be modified via the module's GUC settings.
  */
-static ValidatorModuleResult *
-validate_token(ValidatorModuleState *state, const char *token, const char *role)
+static bool
+validate_token(const ValidatorModuleState *state,
+			   const char *token, const char *role,
+			   ValidatorModuleResult *res)
 {
-	ValidatorModuleResult *res;
-
 	/* Check to make sure our private state still exists. */
 	if (state->private_data != PRIVATE_COOKIE)
 		elog(ERROR, "oauth_validator: private state cookie changed to %p in validate",
 			 state->private_data);
-
-	res = palloc(sizeof(ValidatorModuleResult));
 
 	elog(LOG, "oauth_validator: token=\"%s\", role=\"%s\"", token, role);
 	elog(LOG, "oauth_validator: issuer=\"%s\", scope=\"%s\"",
@@ -131,5 +139,5 @@ validate_token(ValidatorModuleState *state, const char *token, const char *role)
 	else
 		res->authn_id = pstrdup(role);
 
-	return res;
+	return true;
 }

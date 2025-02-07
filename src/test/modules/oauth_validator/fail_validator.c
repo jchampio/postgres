@@ -19,12 +19,15 @@
 
 PG_MODULE_MAGIC;
 
-static ValidatorModuleResult *fail_token(ValidatorModuleState *state,
-										 const char *token,
-										 const char *role);
+static bool fail_token(const ValidatorModuleState *state,
+					   const char *token,
+					   const char *role,
+					   ValidatorModuleResult *result);
 
 /* Callback implementations (we only need the main one) */
 static const OAuthValidatorCallbacks validator_callbacks = {
+	PG_OAUTH_VALIDATOR_MAGIC,
+
 	.validate_cb = fail_token,
 };
 
@@ -34,8 +37,10 @@ _PG_oauth_validator_module_init(void)
 	return &validator_callbacks;
 }
 
-static ValidatorModuleResult *
-fail_token(ValidatorModuleState *state, const char *token, const char *role)
+static bool
+fail_token(const ValidatorModuleState *state,
+		   const char *token, const char *role,
+		   ValidatorModuleResult *res)
 {
 	elog(FATAL, "fail_validator: sentinel error");
 	pg_unreachable();

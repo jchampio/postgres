@@ -297,13 +297,15 @@
    validator module a function named
    <function>_PG_oauth_validator_module_init</function> must be provided. The
    return value of the function must be a pointer to a struct of type
-   <structname>OAuthValidatorCallbacks</structname>, which contains pointers to
-   the module's token validation functions. The returned
+   <structname>OAuthValidatorCallbacks</structname>, which contains a magic
+   number and pointers to the module's token validation functions. The returned
    pointer must be of server lifetime, which is typically achieved by defining
    it as a <literal>static const</literal> variable in global scope.
 <programlisting>
 typedef struct OAuthValidatorCallbacks
 {
+    uint32        magic;            /* must be set to PG_OAUTH_VALIDATOR_MAGIC */
+
     ValidatorStartupCB startup_cb;
     ValidatorShutdownCB shutdown_cb;
     ValidatorValidateCB validate_cb;
@@ -348,14 +350,16 @@ typedef void (*ValidatorStartupCB) (ValidatorModuleState *state);
     previous calls will be available in <structfield>state->private_data</structfield>.
 
 <programlisting>
-typedef ValidatorModuleResult *(*ValidatorValidateCB) (ValidatorModuleState *state, const char *token, const char *role);
+typedef bool (*ValidatorValidateCB) (const ValidatorModuleState *state,
+                                     const char *token, const char *role,
+                                     ValidatorModuleResult *result);
 </programlisting>
 
     <replaceable>token</replaceable> will contain the bearer token to validate.
     The server has ensured that the token is well-formed syntactically, but no
     other validation has been performed.  <replaceable>role</replaceable> will
     contain the role the user has requested to log in as.  The callback must
-    return a palloc'd <literal>ValidatorModuleResult</literal> struct, which is
+    set output parameters in the <literal>result</literal> struct, which is
     defined as below:
 
 <programlisting>
@@ -375,17 +379,17 @@ typedef struct ValidatorModuleResult
     determined.
    </para>
    <para>
-    The caller assumes ownership of the returned memory allocation, the
-    validator module should not in any way access the memory after it has been
-    returned.  A validator may instead return NULL to signal an internal
-    error.
+    A validator may return <literal>false</literal> to signal an internal error,
+    in which case any result parameters are ignored and the connection fails.
+    Otherwise the validator should return <literal>true</literal> to indicate
+    that it has processed the token and made an authorization decision.
    </para>
    <para>
     The behavior after <function>validate_cb</function> returns depends on the
     specific HBA setup.  Normally, the <structfield>authn_id</structfield> user
     name must exactly match the role that the user is logging in as.  (This
     behavior may be modified with a usermap.)  But when authenticating against
-    an HBA rule with <literal>trust_validator_authz</literal> turned on, the
+    an HBA rule with <literal>delegate_ident_mapping</literal> turned on, the
     server will not perform any checks on the value of
     <structfield>authn_id</structfield> at all; in this case it is up to the
     validator to ensure that the token carries enough privileges for the user to
