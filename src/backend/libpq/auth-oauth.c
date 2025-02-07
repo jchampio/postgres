@@ -490,9 +490,8 @@ generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen)
 	/*
 	 * The admin needs to set an issuer and scope for OAuth to work. There's
 	 * not really a way to hide this from the user, either, because we can't
-	 * choose a "default" issuer, so be honest in the failure message.
-	 *
-	 * TODO: see if there's a better place to fail, earlier than this.
+	 * choose a "default" issuer, so be honest in the failure message. (In
+	 * practice such configurations are rejected during HBA parsing.)
 	 */
 	if (!ctx->issuer || !ctx->scope)
 		ereport(FATAL,

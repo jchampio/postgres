@@ -10255,9 +10255,9 @@ typedef struct _PGpromptOAuthDevice
          example, by displaying a QR code). The URL and user code should still
          be displayed to the end user in this case, because the code will be
          manually confirmed by the provider, and the URL lets users continue
-         even if they can't use the non-textual method. Review the RFC's
-         <ulink url="https://datatracker.ietf.org/doc/html/rfc8628#section-3.3.1">notes
-         on non-textual verification</ulink>.
+         even if they can't use the non-textual method. For more information,
+         see section 3.3.1 in
+         <ulink url="https://datatracker.ietf.org/doc/html/rfc8628#section-3.3.1">RFC 8628</ulink>.
         </para>
        </listitem>
       </varlistentry>

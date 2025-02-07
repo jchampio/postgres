@@ -225,13 +225,14 @@ static void
 free_async_ctx(PGconn *conn, struct async_ctx *actx)
 {
 	/*
-	 * TODO: in general, none of the error cases below should ever happen if
-	 * we have no bugs above. But if we do hit them, surfacing those errors
-	 * somehow might be the only way to have a chance to debug them. What's
-	 * the best way to do that? Assertions? Spraying messages on stderr?
-	 * Bubbling an error code to the top? Appending to the connection's error
-	 * message only helps if the bug caused a connection failure; otherwise
-	 * it'll be buried...
+	 * In general, none of the error cases below should ever happen if we have
+	 * no bugs above. But if we do hit them, surfacing those errors somehow
+	 * might be the only way to have a chance to debug them.
+	 *
+	 * TODO: At some point it'd be nice to have a standard way to warn about
+	 * teardown failures. Appending to the connection's error message only
+	 * helps if the bug caused a connection failure; otherwise it'll be
+	 * buried...
 	 */
 
 	if (actx->curlm && actx->curl)
@@ -876,7 +877,7 @@ parse_json_number(const char *s)
 		 * Either the lexer screwed up or our assumption above isn't true, and
 		 * either way a developer needs to take a look.
 		 */
-		Assert(cnt == 1);
+		Assert(false);
 		return 0;
 	}
 
@@ -1121,6 +1122,7 @@ setup_multiplexer(struct async_ctx *actx)
 	actx->mux = kqueue();
 	if (actx->mux < 0)
 	{
+		/*- translator: the term "kqueue" (kernel queue) should not be translated */
 		actx_error(actx, "failed to create kqueue: %m");
 		return false;
 	}
@@ -1486,7 +1488,7 @@ debug_callback(CURL *handle, curl_infotype type, char *data, size_t size,
 
 		if (!printed_prefix)
 		{
-			appendPQExpBuffer(&buf, "%s ", prefix);
+			appendPQExpBuffer(&buf, "[libcurl] %s ", prefix);
 			printed_prefix = true;
 		}
 
@@ -1570,6 +1572,12 @@ setup_curl_handles(struct async_ctx *actx)
 	 * NB: If libcurl is not built against a friendly DNS resolver (c-ares or
 	 * threaded), setting this option prevents DNS lookups from timing out
 	 * correctly. We warn about this situation at configure time.
+	 *
+	 * TODO: Perhaps there's a clever way to warn the user about synchronous
+	 * DNS at runtime too? It's not immediately clear how to do that in a
+	 * helpful way: for many standard single-threaded use cases, the user
+	 * might not care at all, so spraying warnings to stderr would probably do
+	 * more harm than good.
 	 */
 	CHECK_SETOPT(actx, CURLOPT_NOSIGNAL, 1L, return false);
 
