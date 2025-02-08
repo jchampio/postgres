@@ -32,7 +32,19 @@
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
 
-#define MAX_OAUTH_RESPONSE_SIZE (1024 * 1024)
+/*
+ * It's generally prudent to set a maximum response size to buffer in memory,
+ * but it's less clear what size to choose. The biggest of our expected
+ * responses is the server metadata JSON, which will only continue to grow in
+ * size; the number of IANA-registered parameters in that document is up to 78
+ * as of February 2025.
+ *
+ * Even if every single parameter were to take up 2k on average (a previously
+ * common limit on the size of a URL), 256k gives us 128 parameter values before
+ * we give up. (That's almost certainly complete overkill in practice; 2-4k
+ * appears to be common among popular providers at the moment.)
+ */
+#define MAX_OAUTH_RESPONSE_SIZE (256 * 1024)
 
 /*
  * Parsed JSON Representations
