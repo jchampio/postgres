@@ -7,6 +7,7 @@ use Config qw ( %Config );
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
+use Time::HiRes qw(usleep);
 
 use FindBin;
 use lib $FindBin::RealBin;
@@ -70,6 +71,23 @@ $node->start;
 # Run this before we lock down access below.
 my $result = $node->safe_psql('postgres', "SHOW ssl_library");
 is($result, $ssl_server->ssl_library(), 'ssl_library parameter');
+
+my $injection_points_unavailable = '';
+if ($ENV{enable_injection_points} ne 'yes')
+{
+	$injection_points_unavailable =
+	  'Injection points not supported by this build';
+}
+elsif (!$node->check_extension('injection_points'))
+{
+	$injection_points_unavailable =
+	  'Extension injection_points not installed';
+}
+else
+{
+	# For ease of setup, make injection_points available for all new databases.
+	$node->safe_psql('template1', 'CREATE EXTENSION injection_points');
+}
 
 $ssl_server->configure_test_server_for_ssl($node, $SERVERHOSTADDR,
 	$SERVERHOSTCIDR, 'trust');
@@ -555,6 +573,53 @@ command_like(
 	qr{^pid,ssl,version,cipher,bits,client_dn,client_serial,issuer_dn\r?\n
 				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,_null_,_null_,_null_\r?$}mx,
 	'pg_stat_ssl view without client certificate');
+
+# Test that pg_stat_ssl gets filled in early, prior to authentication. Requires
+# injection point support.
+SKIP:
+{
+	skip $injection_points_unavailable, 1 if $injection_points_unavailable;
+
+	# Connect to the server and inject a waitpoint.
+	my $psql =
+	  $node->background_psql('trustdb', connstr => "$common_connstr user=");
+	$psql->query_safe(
+		"SELECT injection_points_attach('init-pre-auth', 'wait')");
+
+	# From this point on, all new connections will hang during startup, just
+	# before authentication. Use the $psql connection handle for server
+	# interaction.
+	my $conn = $node->background_psql(
+		'trustdb',
+		connstr => $common_connstr,
+		wait => 0);
+
+	# Wait for the connection to show up.
+	my $pid;
+	while (1)
+	{
+		$pid = $psql->query(
+			"SELECT pid FROM pg_stat_activity WHERE state = 'starting' AND client_addr IS NOT NULL;");
+		last if $pid ne "";
+
+		usleep(100_000);
+	}
+
+	like(
+		$psql->query(
+			"SELECT ssl, version, cipher, bits FROM pg_stat_ssl WHERE pid = $pid"
+		),
+		qr/^t\|TLSv[\d.]+\|[\w-]+\|\d+$/,
+		'pg_stat_ssl view is updated prior to authentication');
+
+	# Detach the waitpoint and wait for the connection to complete.
+	$psql->query_safe("SELECT injection_points_wakeup('init-pre-auth');");
+	$conn->wait_connect();
+
+	$psql->query_safe("SELECT injection_points_detach('init-pre-auth');");
+	$psql->quit();
+	$conn->quit();
+}
 
 # Test min/max SSL protocol versions.
 $node->connect_ok(

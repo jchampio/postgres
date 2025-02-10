@@ -6,6 +6,7 @@ tests += {
   'bd': meson.current_build_dir(),
   'tap': {
     'env': {
+      'enable_injection_points': get_option('injection_points') ? 'yes' : 'no',
       'with_ssl': ssl_library,
       'OPENSSL': openssl.found() ? openssl.path() : '',
     },

@@ -10,12 +10,13 @@
 #-------------------------------------------------------------------------
 
 EXTRA_INSTALL = contrib/sslinfo
+EXTRA_INSTALL += src/test/modules/injection_points
 
 subdir = src/test/ssl
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
-export OPENSSL with_ssl
+export OPENSSL enable_injection_points with_ssl
 
 # The sslfiles targets are separated into their own file due to interactions
 # with settings in Makefile.global.
