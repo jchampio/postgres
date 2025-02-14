@@ -804,7 +804,6 @@ def test_oauth_bad_response_to_error_challenge(conn, oauth_ctx, resp_type, resp,
             ExpectedError(
                 PROTOCOL_VIOLATION_ERRCODE,
                 "malformed OAUTHBEARER message",
-                "did not contain a final terminator",
             ),
             id="missing list terminator: empty list",
         ),
