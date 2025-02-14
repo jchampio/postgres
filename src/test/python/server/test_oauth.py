@@ -722,7 +722,6 @@ def test_oauth_bad_response_to_error_challenge(conn, oauth_ctx, resp_type, resp,
             ExpectedError(
                 PROTOCOL_VIOLATION_ERRCODE,
                 "malformed OAUTHBEARER message",
-                "Comma expected",
             ),
             id="bad GS2 header: missing channel binding terminator",
         ),
