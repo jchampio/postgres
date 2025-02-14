@@ -70,7 +70,7 @@ struct oauth_ctx
 	const char *scope;
 };
 
-static char *sanitize_char(char c);
+static void sanitize_char(char c, char *buf, size_t buflen);
 static char *parse_kvpairs_for_auth(char **input);
 static void generate_error_response(struct oauth_ctx *ctx, char **output, int *outputlen);
 static bool validate(Port *port, const char *auth);
@@ -139,6 +139,7 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	char		cbind_flag;
 	char	   *auth;
 	int			status;
+	char		errmsgbuf[5];
 
 	struct oauth_ctx *ctx = opaq;
 
@@ -162,6 +163,7 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 
 	/*
 	 * Check that the input length agrees with the string length of the input.
+	 * Possible reasons for discrepancies include embedded nulls in the string.
 	 */
 	if (inputlen == 0)
 		ereport(ERROR,
@@ -223,22 +225,29 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 
 		case 'y':				/* fall through */
 		case 'n':
-			p++;
+			if (!*(++p))
+				goto endofmessage;
+
 			if (*p != ',')
+			{
+				sanitize_char(*p, errmsgbuf, sizeof(errmsgbuf));
 				ereport(ERROR,
 						errcode(ERRCODE_PROTOCOL_VIOLATION),
 						errmsg("malformed OAUTHBEARER message"),
 						errdetail("Comma expected, but found character \"%s\".",
-								  sanitize_char(*p)));
-			p++;
+								  errmsgbuf));
+			}
+			if (!*(++p))
+				goto endofmessage;
 			break;
 
 		default:
+			sanitize_char(*p, errmsgbuf, sizeof(errmsgbuf));
 			ereport(ERROR,
 					errcode(ERRCODE_PROTOCOL_VIOLATION),
 					errmsg("malformed OAUTHBEARER message"),
 					errdetail("Unexpected channel-binding flag \"%s\".",
-							  sanitize_char(cbind_flag)));
+							  errmsgbuf));
 	}
 
 	/*
@@ -249,21 +258,29 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				errmsg("client uses authorization identity, but it is not supported"));
 	if (*p != ',')
+	{
+		sanitize_char(*p, errmsgbuf, sizeof(errmsgbuf));
 		ereport(ERROR,
 				errcode(ERRCODE_PROTOCOL_VIOLATION),
 				errmsg("malformed OAUTHBEARER message"),
 				errdetail("Unexpected attribute \"%s\" in client-first-message.",
-						  sanitize_char(*p)));
-	p++;
+						  errmsgbuf));
+	}
+	if (!*(++p))
+		goto endofmessage;
 
 	/* All remaining fields are separated by the RFC's kvsep (\x01). */
 	if (*p != KVSEP)
+	{
+		sanitize_char(*p, errmsgbuf, sizeof(errmsgbuf));
 		ereport(ERROR,
 				errcode(ERRCODE_PROTOCOL_VIOLATION),
 				errmsg("malformed OAUTHBEARER message"),
 				errdetail("Key-value separator expected, but found character \"%s\".",
-						  sanitize_char(*p)));
-	p++;
+						  errmsgbuf));
+	}
+	if (!*(++p))
+		goto endofmessage;
 
 	auth = parse_kvpairs_for_auth(&p);
 	if (!auth)
@@ -296,6 +313,13 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
 	explicit_bzero(input_copy, inputlen);
 
 	return status;
+
+endofmessage:
+	explicit_bzero(input_copy, inputlen);
+	ereport(ERROR,
+			errcode(ERRCODE_PROTOCOL_VIOLATION),
+			errmsg("malformed OAUTHBEARER message"));
+	pg_unreachable();
 }
 
 /*
@@ -303,19 +327,14 @@ oauth_exchange(void *opaq, const char *input, int inputlen,
  *
  * If it's a printable ASCII character, print it as a single character.
  * otherwise, print it in hex.
- *
- * The returned pointer points to a static buffer.
  */
-static char *
-sanitize_char(char c)
+static void
+sanitize_char(char c, char *buf, size_t buflen)
 {
-	static char buf[5];
-
 	if (c >= 0x21 && c <= 0x7E)
-		snprintf(buf, sizeof(buf), "'%c'", c);
+		snprintf(buf, buflen, "'%c'", c);
 	else
-		snprintf(buf, sizeof(buf), "0x%02x", (unsigned char) c);
-	return buf;
+		snprintf(buf, buflen, "0x%02x", (unsigned char) c);
 }
 
 /*
