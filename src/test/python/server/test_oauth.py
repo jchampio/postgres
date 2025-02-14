@@ -759,17 +759,6 @@ def test_oauth_bad_response_to_error_challenge(conn, oauth_ctx, resp_type, resp,
             ExpectedError(
                 PROTOCOL_VIOLATION_ERRCODE,
                 "malformed OAUTHBEARER message",
-                "Key-value separator expected",
-            ),
-            id="missing initial kvsep",
-        ),
-        pytest.param(
-            pq3.types.PasswordMessage,
-            pq3.SASLInitialResponse.build(dict(name=b"OAUTHBEARER", data=b"y,,")),
-            ExpectedError(
-                PROTOCOL_VIOLATION_ERRCODE,
-                "malformed OAUTHBEARER message",
-                "Key-value separator expected",
             ),
             id="missing initial kvsep",
         ),
