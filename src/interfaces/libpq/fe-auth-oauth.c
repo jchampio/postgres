@@ -815,13 +815,23 @@ fail:
 }
 
 /*
- * Fill in our issuer identifier and discovery URI, if possible, using the
+ * Fill in our issuer identifier (and discovery URI, if possible) using the
  * connection parameters. If conn->oauth_discovery_uri can't be populated in
  * this function, it will be requested from the server.
  */
 static bool
 setup_oauth_parameters(PGconn *conn)
 {
+	/*
+	 * This is the only function that sets conn->oauth_issuer_id. If a
+	 * previous connection attempt has already computed it, don't overwrite it
+	 * or the discovery URI. (There's no reason for them to change once
+	 * they're set, and handle_oauth_sasl_error() will fail the connection if
+	 * the server attempts to switch them on us later.)
+	 */
+	if (conn->oauth_issuer_id)
+		return true;
+
 	/*---
 	 * To talk to a server, we require the user to provide issuer and client
 	 * identifiers.
