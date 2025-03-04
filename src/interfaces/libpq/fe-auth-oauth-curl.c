@@ -1478,6 +1478,9 @@ timer_expired(struct async_ctx *actx)
 		return -1;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "timer has %sexpired\n", (res > 0 ? "" : "not "));
+
 	return (res > 0);
 #endif
 
@@ -1825,6 +1828,9 @@ drive_request(struct async_ctx *actx)
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
+
+	if (actx->debugging)
+		fprintf(stderr, "In drive_request\n");
 
 	if (actx->running)
 	{
