@@ -1362,6 +1362,11 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s timer: %ld ms\n",
+				(timeout < 0 ? "Removed" : "Set"),
+				timeout);
+
 	return true;
 #endif
 #ifdef HAVE_SYS_EVENT_H
@@ -1402,7 +1407,12 @@ set_timer(struct async_ctx *actx, long timeout)
 
 	/* If we're not adding a timer, we're done. */
 	if (timeout < 0)
+	{
+		if (actx->debugging)
+			fprintf(stderr, "Removed timer: %ld ms\n", timeout);
+
 		return true;
+	}
 
 	EV_SET(&ev, 1, EVFILT_TIMER, (EV_ADD | EV_ONESHOT), 0, timeout, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0)
@@ -1417,6 +1427,9 @@ set_timer(struct async_ctx *actx, long timeout)
 		actx_error(actx, "adding kqueue timer to multiplexer: %m");
 		return false;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "Added timer: %ld ms\n", timeout);
 
 	return true;
 #endif
