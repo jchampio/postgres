@@ -1294,6 +1294,16 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 		return -1;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s fd %d%s\n",
+				(op == EPOLL_CTL_DEL ? "Removed"
+				 : (op == EPOLL_CTL_ADD ? "Added" : "Updated")),
+				socket,
+				(what == CURL_POLL_REMOVE ? ""
+				 : (what == CURL_POLL_IN ? " (read)"
+					: (what == CURL_POLL_OUT ? " (write)"
+					   : " (read/write)"))));
+
 	return 0;
 #elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev[2];
@@ -1404,6 +1414,15 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 
 	/* Update the event count, and we're done. */
 	actx->nevents += nev;
+
+	if (actx->debugging)
+		fprintf(stderr, "%s fd %d%s\n",
+				(what == CURL_POLL_REMOVE ? "Removed" : "Updated"),
+				socket,
+				(what == CURL_POLL_REMOVE ? ""
+				 : (what == CURL_POLL_IN ? " (read)"
+					: (what == CURL_POLL_OUT ? " (write)"
+					   : " (read/write)"))));
 
 	return 0;
 #else
@@ -1525,6 +1544,11 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s timer: %ld ms\n",
+				(timeout < 0 ? "Removed" : "Set"),
+				timeout);
+
 	return true;
 #elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev;
@@ -1565,7 +1589,12 @@ set_timer(struct async_ctx *actx, long timeout)
 
 	/* If we're not adding a timer, we're done. */
 	if (timeout < 0)
+	{
+		if (actx->debugging)
+			fprintf(stderr, "Removed timer: %ld ms\n", timeout);
+
 		return true;
+	}
 
 	EV_SET(&ev, 1, EVFILT_TIMER, (EV_ADD | EV_ONESHOT), 0, timeout, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0)
@@ -1580,6 +1609,9 @@ set_timer(struct async_ctx *actx, long timeout)
 		actx_error(actx, "adding kqueue timer to multiplexer: %m");
 		return false;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "Added timer: %ld ms\n", timeout);
 
 	return true;
 #else
@@ -1605,6 +1637,9 @@ timer_expired(struct async_ctx *actx)
 		actx_error(actx, "checking timer expiration: %m");
 		return -1;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "timer has %sexpired\n", (res > 0 ? "" : "not "));
 
 	return (res > 0);
 #else
@@ -1982,6 +2017,9 @@ drive_request(struct async_ctx *actx)
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
+
+	if (actx->debugging)
+		fprintf(stderr, "In drive_request\n");
 
 	if (actx->running)
 	{
