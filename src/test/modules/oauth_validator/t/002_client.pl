@@ -151,4 +151,11 @@ foreach my $c (@cases)
 		expected_stderr => $c->{'expected_error'});
 }
 
+my @cmd = ("kqueue_test");
+note "running '" . join("' '", @cmd) . "'";
+
+my ($stdout, $stderr) = run_command(\@cmd);
+is($stdout, "", "kqueue_test: no stdout");
+is($stderr, "", "kqueue_test: no stderr");
+
 done_testing();

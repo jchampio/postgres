@@ -67,6 +67,25 @@ oauth_hook_client = executable('oauth_hook_client',
 )
 testprep_targets += oauth_hook_client
 
+kqueue_test_sources = files(
+  'kqueue_test.c',
+)
+
+if host_system == 'windows'
+  kqueue_test_sources += rc_bin_gen.process(win32ver_rc, extra_args: [
+    '--NAME', 'kqueue_test',
+    '--FILEDESC', 'kqueue_test',])
+endif
+
+kqueue_test = executable('kqueue_test',
+  kqueue_test_sources,
+  dependencies: [frontend_code, libpq],
+  kwargs: default_bin_args + {
+    'install': false,
+  },
+)
+testprep_targets += kqueue_test
+
 tests += {
   'name': 'oauth_validator',
   'sd': meson.current_source_dir(),
