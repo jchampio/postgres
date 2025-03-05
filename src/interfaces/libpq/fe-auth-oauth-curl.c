@@ -2913,3 +2913,86 @@ pg_fe_run_oauth_flow(PGconn *conn)
 
 	return result;
 }
+
+/*
+ * Unit tests, to check functionality that's difficult to trigger externally.
+ */
+
+#ifdef PG_BUILD_OAUTH_UNIT_TESTS
+#ifdef USE_ASSERT_CHECKING
+
+static struct async_ctx *
+init_test_actx(void)
+{
+	struct async_ctx *actx;
+
+	actx = calloc(1, sizeof(*actx));
+	Assert(actx);
+
+	actx->mux = PGINVALID_SOCKET;
+	actx->timerfd = -1;
+	actx->debugging = true;
+
+	initPQExpBuffer(&actx->errbuf);
+
+	Assert(setup_multiplexer(actx));
+
+	return actx;
+}
+
+static void
+free_test_actx(struct async_ctx *actx)
+{
+	termPQExpBuffer(&actx->errbuf);
+
+	if (actx->mux != PGINVALID_SOCKET)
+		close(actx->mux);
+	if (actx->timerfd >= 0)
+		close(actx->timerfd);
+
+	free(actx);
+}
+
+static void
+test_set_timer(void)
+{
+	struct async_ctx *actx = init_test_actx();
+	pg_usec_time_t now;
+	int			res;
+
+	now = PQgetCurrentTimeUSec();
+
+	Assert(set_timer(actx, 0));
+	res = PQsocketPoll(actx->mux, 1, 0, now + 1000 * 1000);
+	Assert(res != -1);
+	Assert(res != 0);
+
+	Assert(set_timer(actx, INT_MAX));
+	res = PQsocketPoll(actx->mux, 1, 0, 0);
+	Assert(res != -1);
+	Assert(res == 0);
+
+	free_test_actx(actx);
+}
+
+int
+main(int argc, char *argv[])
+{
+	test_set_timer();
+
+	return 0;
+}
+
+#else							/* !USE_ASSERT_CHECKING */
+
+int
+main(int argc, char *argv[])
+{
+	printf("Assertions must be enabled (--enable-cassert/-Dcassert=true) to run OAuth unit tests.\n");
+
+	/* Tell the TAP test to skip this. */
+	return 2;
+}
+
+#endif							/* USE_ASSERT_CHECKING */
+#endif							/* PG_BUILD_OAUTH_UNIT_TESTS */
