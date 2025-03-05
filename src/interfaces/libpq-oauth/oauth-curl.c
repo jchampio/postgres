@@ -1886,6 +1886,14 @@ drive_request(struct async_ctx *actx)
 	if (actx->debugging)
 		fprintf(stderr, "In drive_request\n");
 
+	/*
+	if (timer_expired(actx))
+	{
+		if (!set_timer(actx, -1))
+			return PGRES_POLLING_FAILED;
+	}
+	*/
+
 	if (actx->running)
 	{
 		/*---
