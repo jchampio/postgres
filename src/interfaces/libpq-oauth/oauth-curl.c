@@ -2973,3 +2973,7 @@ pg_fe_run_oauth_flow(PGconn *conn)
 
 	return result;
 }
+
+#ifdef BUILD_OAUTH_UNIT_TESTS
+#include "test-oauth-curl.c"
+#endif
