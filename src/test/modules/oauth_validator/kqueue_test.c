@@ -3,13 +3,15 @@
 #ifndef HAVE_SYS_EVENT_H
 
 /* No-op. */
-int main()
+int
+main()
 {
 	return 0;
 }
 
 #else
 
+#include <limits.h>
 #include <stdio.h>
 #include <sys/event.h>
 #include <sys/select.h>
@@ -31,130 +33,63 @@ now_us()
 }
 
 int
-readable(int fd)
+main()
 {
-	int res = PQsocketPoll(fd, 1, 0, 0);
-
-	printf("[%7ld] fd %d is %sreadable\n",
-		   now_us() - start_us, fd, (res > 0) ? "" : "not ");
-	return (res > 0);
-}
-
-int main()
-{
-	int one, two;
+	int			kq;
 	struct kevent ev;
+	int			timeout;
+	int			res;
 
-	one = kqueue();
-	two = kqueue();
-
+	kq = kqueue();
 	start_us = now_us();
 
-#define ADD_TO_MUX() \
-	do \
-	{ \
-		EV_SET(&ev, two, EVFILT_READ, EV_ADD, 0, 0, 0); \
-		if (kevent(one, &ev, 1, NULL, 0, NULL) < 0) \
-		{ \
-			perror("adding timer to mux"); \
-			return 1; \
-		} \
-	} while (0)
+	/* Set the timer (1 ms timeout). */
+	timeout = 1;
+	EV_SET(&ev, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, timeout, 0);
+	if (kevent(kq, &ev, 1, NULL, 0, NULL) < 0)
+	{
+		perror("setting EVFILT_TIMER");
+		return 1;
+	}
 
-#define REMOVE_FROM_MUX() \
-	do \
-	{ \
-		EV_SET(&ev, two, EVFILT_READ, EV_DELETE, 0, 0, 0); \
-		if (kevent(one, &ev, 1, NULL, 0, NULL) < 0) \
-		{ \
-			perror("removing timer from mux"); \
-			return 1; \
-		} \
-	} while (0)
+	printf("[%7ld us] timer is set\n", now_us() - start_us);
 
-#define SET_TIMER() \
-	do \
-	{ \
-		EV_SET(&ev, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 1, 0); \
-		if (kevent(two, &ev, 1, NULL, 0, NULL) < 0) \
-		{ \
-			perror("setting EVFILT_TIMER"); \
-			return 1; \
-		} \
-	} while (0)
+	/* Wait (up to a second) for readable. */
+	res = PQsocketPoll(kq, 1, 0, now_us() + 1000 * 1000);
+	if (res == -1)
+	{
+		perror("polling kqueue");
+		return 1;
+	}
 
-#define STOP_TIMER() \
-	do \
-	{ \
-		EV_SET(&ev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0); \
-		if (kevent(two, &ev, 1, NULL, 0, NULL) < 0) \
-		{ \
-			perror("deleting EVFILT_TIMER"); \
-			return 1; \
-		} \
-	} while (0)
+	printf("[%7ld us] kqueue is %sreadable\n",
+		   now_us() - start_us, (res > 0) ? "" : "not ");
 
-#define STATUS(STR) \
-	do \
-	{ \
-		printf("[%7ld] " STR "\n", now_us() - start_us); \
-		readable(one); \
-		readable(two); \
-	} while (0)
+	/* Reset the timer far in the future. */
+	timeout = INT_MAX;
+	EV_SET(&ev, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, timeout, 0);
+	if (kevent(kq, &ev, 1, NULL, 0, NULL) < 0)
+	{
+		perror("setting EVFILT_TIMER");
+		return 1;
+	}
 
-#define WAIT_READABLE() \
-	do \
-	{ \
-		while (!readable(two)); \
-		while (!readable(one)); \
-		STATUS("queues are readable"); \
-	} while (0)
+	printf("[%7ld us] timer is reset\n", now_us() - start_us);
 
-	ADD_TO_MUX();
-	STATUS("added timer to mux");
+	/* Check for readable. */
+	res = PQsocketPoll(kq, 1, 0, 0);
+	if (res == -1)
+	{
+		perror("polling kqueue");
+		return 1;
+	}
 
-	SET_TIMER();
-	STATUS("started timer");
-	WAIT_READABLE();
+	printf("[%7ld us] kqueue is %sreadable\n",
+		   now_us() - start_us, (res > 0) ? "still " : "not ");
 
-	SET_TIMER();
-	STATUS("retriggered timer");
-	WAIT_READABLE();
-
-	SET_TIMER();
-	STATUS("retriggered timer");
-	ADD_TO_MUX();
-	STATUS("readded timer to mux");
-	WAIT_READABLE();
-
-	STOP_TIMER();
-	STATUS("stopped timer");
-
-	SET_TIMER();
-	STATUS("restarted timer");
-	WAIT_READABLE();
-
-	REMOVE_FROM_MUX();
-	ADD_TO_MUX();
-	STATUS("removed/readded timer to mux");
-	WAIT_READABLE();
-
-	STOP_TIMER();
-	STATUS("stopped timer");
-
-	REMOVE_FROM_MUX();
-	STATUS("removed timer from mux");
-
-	ADD_TO_MUX();
-	STATUS("readded timer to mux");
-	SET_TIMER();
-	STATUS("set timer");
-	WAIT_READABLE();
-
-	close(one);
-	close(two);
+	close(kq);
 
 	return 0;
 }
 
-#endif /* HAVE_SYS_EVENT_H */
+#endif							/* HAVE_SYS_EVENT_H */
