@@ -1326,6 +1326,10 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
  * in the set at all times and just disarm it when it's not needed. For kqueue,
  * the timer is removed completely when disabled to prevent stale timeouts from
  * remaining in the queue.
+ *
+ * To meet Curl requirements for the CURLMOPT_TIMERFUNCTION, implementations of
+ * set_timer must handle repeated calls by fully discarding any previous running
+ * or expired timer.
  */
 static bool
 set_timer(struct async_ctx *actx, long timeout)
@@ -1358,6 +1362,11 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s timer: %ld ms\n",
+				(timeout < 0 ? "Removed" : "Set"),
+				timeout);
+
 	return true;
 #endif
 #ifdef HAVE_SYS_EVENT_H
@@ -1373,28 +1382,54 @@ set_timer(struct async_ctx *actx, long timeout)
 		timeout = 1;
 #endif
 
-	/* Enable/disable the timer itself. */
-	EV_SET(&ev, 1, EVFILT_TIMER, timeout < 0 ? EV_DELETE : (EV_ADD | EV_ONESHOT),
-		   0, timeout, 0);
+	/*
+	 * Always disable the timer, and remove it from the multiplexer, to clear
+	 * out any already-queued events. (On some BSDs, adding an EVFILT_TIMER to
+	 * a kqueue that already has one will clear stale events, but not on
+	 * macOS.)
+	 *
+	 * If there was no previous timer set, the kevent calls will result in
+	 * ENOENT, which is fine.
+	 */
+	EV_SET(&ev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
+	{
+		actx_error(actx, "deleting kqueue timer: %m", timeout);
+		return false;
+	}
+
+	EV_SET(&ev, actx->timerfd, EVFILT_READ, EV_DELETE, 0, 0, 0);
+	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
+	{
+		actx_error(actx, "removing kqueue timer from multiplexer: %m");
+		return false;
+	}
+
+	/* If we're not adding a timer, we're done. */
+	if (timeout < 0)
+	{
+		if (actx->debugging)
+			fprintf(stderr, "Removed timer: %ld ms\n", timeout);
+
+		return true;
+	}
+
+	EV_SET(&ev, 1, EVFILT_TIMER, (EV_ADD | EV_ONESHOT), 0, timeout, 0);
+	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0)
 	{
 		actx_error(actx, "setting kqueue timer to %ld: %m", timeout);
 		return false;
 	}
 
-	/*
-	 * Add/remove the timer to/from the mux. (In contrast with epoll, if we
-	 * allowed the timer to remain registered here after being disabled, the
-	 * mux queue would retain any previous stale timeout notifications and
-	 * remain readable.)
-	 */
-	EV_SET(&ev, actx->timerfd, EVFILT_READ, timeout < 0 ? EV_DELETE : EV_ADD,
-		   0, 0, 0);
-	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
+	EV_SET(&ev, actx->timerfd, EVFILT_READ, EV_ADD, 0, 0, 0);
+	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0)
 	{
-		actx_error(actx, "could not update timer on kqueue: %m");
+		actx_error(actx, "adding kqueue timer to multiplexer: %m");
 		return false;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "Added timer: %ld ms\n", timeout);
 
 	return true;
 #endif
@@ -1442,6 +1477,9 @@ timer_expired(struct async_ctx *actx)
 		actx_error(actx, "checking kqueue for timeout: %m");
 		return -1;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "timer has %sexpired\n", (res > 0 ? "" : "not "));
 
 	return (res > 0);
 #endif
@@ -1790,6 +1828,15 @@ drive_request(struct async_ctx *actx)
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
+
+	if (actx->debugging)
+		fprintf(stderr, "In drive_request\n");
+
+	if (timer_expired(actx))
+	{
+		if (!set_timer(actx, -1))
+			return PGRES_POLLING_FAILED;
+	}
 
 	if (actx->running)
 	{
@@ -2891,3 +2938,86 @@ pg_fe_run_oauth_flow(PGconn *conn)
 
 	return result;
 }
+
+/*
+ * Unit tests, to check functionality that's difficult to trigger externally.
+ */
+
+#ifdef PG_BUILD_OAUTH_UNIT_TESTS
+#ifdef USE_ASSERT_CHECKING
+
+static struct async_ctx *
+init_test_actx(void)
+{
+	struct async_ctx *actx;
+
+	actx = calloc(1, sizeof(*actx));
+	Assert(actx);
+
+	actx->mux = PGINVALID_SOCKET;
+	actx->timerfd = -1;
+	actx->debugging = true;
+
+	initPQExpBuffer(&actx->errbuf);
+
+	Assert(setup_multiplexer(actx));
+
+	return actx;
+}
+
+static void
+free_test_actx(struct async_ctx *actx)
+{
+	termPQExpBuffer(&actx->errbuf);
+
+	if (actx->mux != PGINVALID_SOCKET)
+		close(actx->mux);
+	if (actx->timerfd >= 0)
+		close(actx->timerfd);
+
+	free(actx);
+}
+
+static void
+test_set_timer(void)
+{
+	struct async_ctx *actx = init_test_actx();
+	pg_usec_time_t now;
+	int			res;
+
+	now = PQgetCurrentTimeUSec();
+
+	Assert(set_timer(actx, 0));
+	res = PQsocketPoll(actx->mux, 1, 0, now + 1000 * 1000);
+	Assert(res != -1);
+	Assert(res != 0);
+
+	Assert(set_timer(actx, INT_MAX));
+	res = PQsocketPoll(actx->mux, 1, 0, 0);
+	Assert(res != -1);
+	Assert(res == 0);
+
+	free_test_actx(actx);
+}
+
+int
+main(int argc, char *argv[])
+{
+	test_set_timer();
+
+	return 0;
+}
+
+#else							/* !USE_ASSERT_CHECKING */
+
+int
+main(int argc, char *argv[])
+{
+	printf("Assertions must be enabled (--enable-cassert/-Dcassert=true) to run OAuth unit tests.\n");
+
+	/* Tell the TAP test to skip this. */
+	return 2;
+}
+
+#endif							/* USE_ASSERT_CHECKING */
+#endif							/* PG_BUILD_OAUTH_UNIT_TESTS */

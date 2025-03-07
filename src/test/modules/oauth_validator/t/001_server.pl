@@ -68,7 +68,7 @@ END
 }
 
 my $port = $webserver->port();
-my $issuer = "http://localhost:$port";
+my $issuer = "http://127.0.0.1:$port";
 
 unlink($node->data_dir . '/pg_hba.conf');
 $node->append_conf(
@@ -255,7 +255,7 @@ $node->connect_ok(
 	connstr(stage => 'all', retries => 1, interval => 2),
 	"token retry (two second interval)",
 	expected_stderr =>
-	  qr@Visit https://example\.com/ and enter the code: postgresuser@);
+	  qr@Visit https://example\.com/ and enter the code: postgresuserxxx@);
 $node->connect_ok(
 	connstr(stage => 'all', retries => 1, interval => JSON::PP::null),
 	"token retry (default interval)",
