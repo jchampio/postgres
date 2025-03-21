@@ -1,21 +1,21 @@
 # Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
+if not libcurl.found() or host_system == 'windows'
+  subdir_done()
+endif
+
 libpq_sources = files(
   'fe-auth-oauth-curl.c',
 )
 libpq_so_sources = [] # for shared lib, in addition to the above
 
-if host_system == 'windows'
-  error('libpq-oauth is not supported on Windows')
-endif
-
-if not libcurl.found()
-  error('libpq-oauth depends on libcurl')
-endif
+export_file = custom_target('libpq-oauth.exports',
+  kwargs: gen_export_kwargs,
+)
 
 # port needs to be in include path due to pthread-win32.h
 libpq_oauth_inc = include_directories('.', '../libpq', '../../port')
-libpq_c_args = ['-DSO_MAJOR_VERSION=5']
+libpq_c_args = ['-DSO_MAJOR_VERSION=1']
 
 # Not using both_libraries() here as
 # 1) resource files should only be in the shared library
@@ -25,7 +25,7 @@ libpq_c_args = ['-DSO_MAJOR_VERSION=5']
 # We could try to avoid building the source files twice, but it probably adds
 # more complexity than its worth (reusing object files requires also linking
 # to the library on windows or breaks precompiled headers).
-libpq_st = static_library('libpq-oauth',
+libpq_oauth_st = static_library('libpq-oauth',
   libpq_sources,
   include_directories: [libpq_oauth_inc],
   c_args: libpq_c_args,
@@ -39,10 +39,12 @@ libpq_oauth_so = shared_library('libpq-oauth',
   include_directories: [libpq_oauth_inc, postgres_inc],
   c_args: libpq_c_args,
   c_pch: pch_postgres_fe_h,
-  version: '5.' + pg_version_major.to_string(),
-  soversion: host_system != 'windows' ? '5' : '',
-  darwin_versions: ['5', '5.' + pg_version_major.to_string()],
+  version: '1.' + pg_version_major.to_string(),
+  soversion: host_system != 'windows' ? '1' : '',
+  darwin_versions: ['1', '1.' + pg_version_major.to_string()],
   dependencies: [frontend_shlib_code, libpq, libpq_oauth_deps],
+  link_depends: export_file,
+  link_args: export_fmt.format(export_file.full_path()),
   kwargs: default_lib_args,
 )
 

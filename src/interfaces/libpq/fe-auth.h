@@ -18,9 +18,6 @@
 #include "libpq-int.h"
 
 
-PGDLLIMPORT PQauthDataHook_type PQauthDataHook;
-
-
 /* Prototypes for functions in fe-auth.c */
 extern int	pg_fe_sendauth(AuthRequest areq, int payloadlen, PGconn *conn,
 						   bool *async);

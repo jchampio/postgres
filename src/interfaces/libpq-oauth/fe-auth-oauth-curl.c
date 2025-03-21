@@ -29,12 +29,10 @@
 #include "common/jsonapi.h"
 #include "fe-auth.h"
 #include "fe-auth-oauth.h"
+#include "fe-auth-oauth-curl.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
-
-static int auth_data_hook(PGauthData type, PGconn *conn, void *data);;
-
-extern PQauthDataHook_type PQauthDataHook = auth_data_hook;
+#include "pg_config_paths.h"
 
 /*
  * It's generally prudent to set a maximum response size to buffer in memory,
@@ -234,14 +232,74 @@ struct async_ctx
 	bool		debugging;		/* can we give unsafe developer assistance? */
 };
 
-static int
-auth_data_hook(PGauthData type, PGconn *conn, void *data)
-{
-	conn->async_auth = pg_fe_run_oauth_flow;
-	conn->cleanup_async_auth = pg_fe_cleanup_oauth_flow;
+#ifdef ENABLE_NLS
 
-	return 0;
+static void
+libpq_binddomain(void)
+{
+	/*
+	 * At least on Windows, there are gettext implementations that fail if
+	 * multiple threads call bindtextdomain() concurrently.  Use a mutex and
+	 * flag variable to ensure that we call it just once per process.  It is
+	 * not known that similar bugs exist on non-Windows platforms, but we
+	 * might as well do it the same way everywhere.
+	 */
+	static volatile bool already_bound = false;
+	static pthread_mutex_t binddomain_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	if (!already_bound)
+	{
+		/* bindtextdomain() does not preserve errno */
+#ifdef WIN32
+		int			save_errno = GetLastError();
+#else
+		int			save_errno = errno;
+#endif
+
+		(void) pthread_mutex_lock(&binddomain_mutex);
+
+		if (!already_bound)
+		{
+			const char *ldir;
+
+			/*
+			 * No relocatable lookup here because the calling executable could
+			 * be anywhere
+			 */
+			ldir = getenv("PGLOCALEDIR");
+			if (!ldir)
+				ldir = LOCALEDIR;
+			bindtextdomain(PG_TEXTDOMAIN("libpq"), ldir);
+			already_bound = true;
+		}
+
+		(void) pthread_mutex_unlock(&binddomain_mutex);
+
+#ifdef WIN32
+		SetLastError(save_errno);
+#else
+		errno = save_errno;
+#endif
+	}
 }
+
+char *
+libpq_gettext(const char *msgid)
+{
+	libpq_binddomain();
+	return dgettext(PG_TEXTDOMAIN("libpq"), msgid);
+}
+
+char *
+libpq_ngettext(const char *msgid, const char *msgid_plural, unsigned long n)
+{
+	libpq_binddomain();
+	return dngettext(PG_TEXTDOMAIN("libpq"), msgid, msgid_plural, n);
+}
+
+#endif							/* ENABLE_NLS */
+
+static void __libpq_append_conn_error(PGconn *conn, const char *fmt,...) pg_attribute_printf(2, 3);
 
 /*
  * Append a formatted string to the error message buffer of the given

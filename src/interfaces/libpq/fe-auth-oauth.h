@@ -33,10 +33,10 @@ typedef struct
 
 	PGconn	   *conn;
 	void	   *async_ctx;
+
+	void	   *builtin_flow;
 } fe_oauth_state;
 
-extern PostgresPollingStatusType pg_fe_run_oauth_flow(PGconn *conn);
-extern void pg_fe_cleanup_oauth_flow(PGconn *conn);
 extern void pqClearOAuthToken(PGconn *conn);
 extern bool oauth_unsafe_debugging_enabled(void);
 

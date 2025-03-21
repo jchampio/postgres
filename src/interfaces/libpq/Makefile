@@ -64,10 +64,6 @@ OBJS += \
 	fe-secure-gssapi.o
 endif
 
-ifeq ($(with_libcurl),yes)
-OBJS += fe-auth-oauth-curl.o
-endif
-
 ifeq ($(PORTNAME), cygwin)
 override shlib = cyg$(NAME)$(DLSUFFIX)
 endif
