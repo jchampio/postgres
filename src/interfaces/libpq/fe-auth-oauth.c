@@ -794,16 +794,8 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 	}
 	else
 	{
-#if USE_LIBCURL
-		/* Hand off to our built-in OAuth flow. */
-		conn->async_auth = pg_fe_run_oauth_flow;
-		conn->cleanup_async_auth = pg_fe_cleanup_oauth_flow;
-
-#else
-		libpq_append_conn_error(conn, "no custom OAuth flows are available, and libpq was not built with libcurl support");
+		libpq_append_conn_error(conn, "no custom OAuth flows are available");
 		goto fail;
-
-#endif
 	}
 
 	return true;

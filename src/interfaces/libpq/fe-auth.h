@@ -18,7 +18,7 @@
 #include "libpq-int.h"
 
 
-extern PQauthDataHook_type PQauthDataHook;
+PGDLLIMPORT PQauthDataHook_type PQauthDataHook;
 
 
 /* Prototypes for functions in fe-auth.c */

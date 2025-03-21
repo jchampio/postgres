@@ -1583,7 +1583,8 @@ PQchangePassword(PGconn *conn, const char *user, const char *passwd)
 	}
 }
 
-PQauthDataHook_type PQauthDataHook = PQdefaultAuthDataHook;
+//PQauthDataHook_type PQauthDataHook = PQdefaultAuthDataHook;
+//PQauthDataHook = PQdefaultAuthDataHook;
 
 PQauthDataHook_type
 PQgetAuthDataHook(void)

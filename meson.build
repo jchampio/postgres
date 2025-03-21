@@ -107,6 +107,7 @@ os_deps = []
 backend_both_deps = []
 backend_deps = []
 libpq_deps = []
+libpq_oauth_deps = []
 
 pg_sysroot = ''
 
@@ -3135,17 +3136,18 @@ libpq_deps += [
 
   gssapi,
   ldap_r,
-  # XXX libcurl must link after libgssapi_krb5 on FreeBSD to avoid segfaults
-  # during gss_acquire_cred(). This is possibly related to Curl's Heimdal
-  # dependency on that platform?
-  libcurl,
   libintl,
   ssl,
 ]
 
+libpq_oauth_deps += [
+  libcurl,
+]
+
 subdir('src/interfaces/libpq')
-# fe_utils depends on libpq
+# fe_utils and libpq-oauth depends on libpq
 subdir('src/fe_utils')
+subdir('src/interfaces/libpq-oauth')
 
 # for frontend binaries
 frontend_code = declare_dependency(
