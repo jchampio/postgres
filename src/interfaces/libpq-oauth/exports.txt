@@ -1,0 +1,3 @@
+# src/interfaces/libpq-oauth/exports.txt
+pg_fe_run_oauth_flow      1
+pg_fe_cleanup_oauth_flow  2
