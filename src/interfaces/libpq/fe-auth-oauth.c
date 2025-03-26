@@ -15,6 +15,10 @@
 
 #include "postgres_fe.h"
 
+#ifndef WIN32
+#include <dlfcn.h>
+#endif
+
 #include "common/base64.h"
 #include "common/hmac.h"
 #include "common/jsonapi.h"
@@ -22,6 +26,7 @@
 #include "fe-auth.h"
 #include "fe-auth-oauth.h"
 #include "mb/pg_wchar.h"
+#include "pg_config_paths.h"
 
 /* The exported OAuth callback mechanism. */
 static void *oauth_init(PGconn *conn, const char *password,
@@ -721,6 +726,93 @@ cleanup_user_oauth_flow(PGconn *conn)
 	state->async_ctx = NULL;
 }
 
+#ifdef USE_LIBCURL
+
+typedef char *(*libpq_gettext_func) (const char *msgid);
+typedef PQExpBuffer (*conn_errorMessage_func) (PGconn *conn);
+
+/*
+ * This shim is injected into libpq-oauth so that it doesn't depend on the
+ * offset of conn->errorMessage.
+ *
+ * TODO: look into exporting libpq_append_conn_error or a comparable API from
+ * libpq, instead.
+ */
+static PQExpBuffer
+conn_errorMessage(PGconn *conn)
+{
+	return &conn->errorMessage;
+}
+
+static bool
+use_builtin_flow(PGconn *conn, fe_oauth_state *state)
+{
+	void		(*init) (pgthreadlock_t threadlock,
+						 libpq_gettext_func gettext_impl,
+						 conn_errorMessage_func errmsg_impl);
+	PostgresPollingStatusType (*flow) (PGconn *conn);
+	void		(*cleanup) (PGconn *conn);
+
+	state->builtin_flow = dlopen("libpq-oauth-" PG_MAJORVERSION DLSUFFIX,
+								 RTLD_NOW | RTLD_LOCAL);
+	if (!state->builtin_flow)
+	{
+		/*
+		 * For end users, this probably isn't an error condition, it just
+		 * means the flow isn't installed. Developers and package maintainers
+		 * may want to debug this via the PGOAUTHDEBUG envvar, though.
+		 *
+		 * Note that POSIX dlerror() isn't guaranteed to be threadsafe.
+		 */
+		if (oauth_unsafe_debugging_enabled())
+			fprintf(stderr, "failed dlopen for libpq-oauth: %s\n", dlerror());
+
+		return false;
+	}
+
+	if ((init = dlsym(state->builtin_flow, "libpq_oauth_init")) == NULL
+		|| (flow = dlsym(state->builtin_flow, "pg_fe_run_oauth_flow")) == NULL
+		|| (cleanup = dlsym(state->builtin_flow, "pg_fe_cleanup_oauth_flow")) == NULL)
+	{
+		/*
+		 * This is more of an error condition than the one above, but due to
+		 * the dlerror() threadsafety issue, lock it behind PGOAUTHDEBUG too.
+		 */
+		if (oauth_unsafe_debugging_enabled())
+			fprintf(stderr, "failed dlsym for libpq-oauth: %s\n", dlerror());
+
+		dlclose(state->builtin_flow);
+		return false;
+	}
+
+	/*
+	 * Inject necessary function pointers into the module.
+	 */
+	init(pg_g_threadlock,
+#ifdef ENABLE_NLS
+		 libpq_gettext,
+#else
+		 NULL,
+#endif
+		 conn_errorMessage);
+
+	/* Set our asynchronous callbacks. */
+	conn->async_auth = flow;
+	conn->cleanup_async_auth = cleanup;
+
+	return true;
+}
+
+#else							/* !USE_LIBCURL */
+
+static bool
+use_builtin_flow(PGconn *conn, fe_oauth_state *state)
+{
+	return false;
+}
+
+#endif							/* USE_LIBCURL */
+
 /*
  * Chooses an OAuth client flow for the connection, which will retrieve a Bearer
  * token for presentation to the server.
@@ -792,18 +884,10 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 		libpq_append_conn_error(conn, "user-defined OAuth flow failed");
 		goto fail;
 	}
-	else
+	else if (!use_builtin_flow(conn, state))
 	{
-#if USE_LIBCURL
-		/* Hand off to our built-in OAuth flow. */
-		conn->async_auth = pg_fe_run_oauth_flow;
-		conn->cleanup_async_auth = pg_fe_cleanup_oauth_flow;
-
-#else
 		libpq_append_conn_error(conn, "no custom OAuth flows are available, and libpq was not built with libcurl support");
 		goto fail;
-
-#endif
 	}
 
 	return true;
