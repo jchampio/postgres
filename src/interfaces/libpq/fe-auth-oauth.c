@@ -15,6 +15,10 @@
 
 #include "postgres_fe.h"
 
+#ifndef WIN32
+#include <dlfcn.h>
+#endif
+
 #include "common/base64.h"
 #include "common/hmac.h"
 #include "common/jsonapi.h"
@@ -721,6 +725,44 @@ cleanup_user_oauth_flow(PGconn *conn)
 	state->async_ctx = NULL;
 }
 
+static bool
+use_builtin_flow(PGconn *conn, fe_oauth_state *state)
+{
+#ifdef WIN32
+	return false;
+#else
+	PostgresPollingStatusType (*flow) (PGconn *conn);
+	void		(*cleanup) (PGconn *conn);
+
+	state->builtin_flow = dlopen(
+#if defined(__darwin__)
+								 "libpq-oauth.1.dylib",
+#else
+								 "libpq-oauth.so.1",
+#endif
+								 RTLD_NOW | RTLD_LOCAL);
+	if (!state->builtin_flow)
+	{
+		fprintf(stderr, "failed dlopen: %s\n", dlerror()); // XXX
+		return false;
+	}
+
+	flow = dlsym(state->builtin_flow, "pg_fe_run_oauth_flow");
+	cleanup = dlsym(state->builtin_flow, "pg_fe_cleanup_oauth_flow");
+
+	if (!(flow && cleanup))
+	{
+		fprintf(stderr, "failed dlsym: %s\n", dlerror()); // XXX
+		return false;
+	}
+
+	conn->async_auth = flow;
+	conn->cleanup_async_auth = cleanup;
+
+	return true;
+#endif							/* !WIN32 */
+}
+
 /*
  * Chooses an OAuth client flow for the connection, which will retrieve a Bearer
  * token for presentation to the server.
@@ -792,18 +834,10 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 		libpq_append_conn_error(conn, "user-defined OAuth flow failed");
 		goto fail;
 	}
-	else
+	else if (!use_builtin_flow(conn, state))
 	{
-#if USE_LIBCURL
-		/* Hand off to our built-in OAuth flow. */
-		conn->async_auth = pg_fe_run_oauth_flow;
-		conn->cleanup_async_auth = pg_fe_cleanup_oauth_flow;
-
-#else
 		libpq_append_conn_error(conn, "no custom OAuth flows are available, and libpq was not built with libcurl support");
 		goto fail;
-
-#endif
 	}
 
 	return true;
