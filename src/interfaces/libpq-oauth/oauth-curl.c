@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * fe-auth-oauth-curl.c
+ * oauth-curl.c
  *	   The libcurl implementation of OAuth/OIDC authentication, using the
  *	   OAuth Device Authorization Grant (RFC 8628).
  *
@@ -8,7 +8,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/interfaces/libpq/fe-auth-oauth-curl.c
+ *	  src/interfaces/libpq-oauth/oauth-curl.c
  *
  *-------------------------------------------------------------------------
  */
@@ -29,10 +29,10 @@
 #include "common/jsonapi.h"
 #include "fe-auth.h"
 #include "fe-auth-oauth.h"
-#include "fe-auth-oauth-curl.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
-#include "pg_config_paths.h"
+#include "oauth-curl.h"
+#include "oauth-utils.h"
 
 /*
  * It's generally prudent to set a maximum response size to buffer in memory,
@@ -232,173 +232,6 @@ struct async_ctx
 	bool		debugging;		/* can we give unsafe developer assistance? */
 };
 
-#ifdef ENABLE_NLS
-
-static void
-libpq_binddomain(void)
-{
-	/*
-	 * At least on Windows, there are gettext implementations that fail if
-	 * multiple threads call bindtextdomain() concurrently.  Use a mutex and
-	 * flag variable to ensure that we call it just once per process.  It is
-	 * not known that similar bugs exist on non-Windows platforms, but we
-	 * might as well do it the same way everywhere.
-	 */
-	static volatile bool already_bound = false;
-	static pthread_mutex_t binddomain_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-	if (!already_bound)
-	{
-		/* bindtextdomain() does not preserve errno */
-#ifdef WIN32
-		int			save_errno = GetLastError();
-#else
-		int			save_errno = errno;
-#endif
-
-		(void) pthread_mutex_lock(&binddomain_mutex);
-
-		if (!already_bound)
-		{
-			const char *ldir;
-
-			/*
-			 * No relocatable lookup here because the calling executable could
-			 * be anywhere
-			 */
-			ldir = getenv("PGLOCALEDIR");
-			if (!ldir)
-				ldir = LOCALEDIR;
-			bindtextdomain(PG_TEXTDOMAIN("libpq"), ldir);
-			already_bound = true;
-		}
-
-		(void) pthread_mutex_unlock(&binddomain_mutex);
-
-#ifdef WIN32
-		SetLastError(save_errno);
-#else
-		errno = save_errno;
-#endif
-	}
-}
-
-char *
-libpq_gettext(const char *msgid)
-{
-	libpq_binddomain();
-	return dgettext(PG_TEXTDOMAIN("libpq"), msgid);
-}
-
-char *
-libpq_ngettext(const char *msgid, const char *msgid_plural, unsigned long n)
-{
-	libpq_binddomain();
-	return dngettext(PG_TEXTDOMAIN("libpq"), msgid, msgid_plural, n);
-}
-
-#endif							/* ENABLE_NLS */
-
-static void __libpq_append_conn_error(PGconn *conn, const char *fmt,...) pg_attribute_printf(2, 3);
-
-/*
- * Append a formatted string to the error message buffer of the given
- * connection, after translating it.  A newline is automatically appended; the
- * format should not end with a newline.
- */
-static void
-__libpq_append_conn_error(PGconn *conn, const char *fmt,...)
-{
-	int			save_errno = errno;
-	bool		done;
-	va_list		args;
-
-	Assert(fmt[strlen(fmt) - 1] != '\n');
-
-	if (PQExpBufferBroken(&conn->errorMessage))
-		return;					/* already failed */
-
-	/* Loop in case we have to retry after enlarging the buffer. */
-	do
-	{
-		errno = save_errno;
-		va_start(args, fmt);
-		done = appendPQExpBufferVA(&conn->errorMessage, libpq_gettext(fmt), args);
-		va_end(args);
-	} while (!done);
-
-	appendPQExpBufferChar(&conn->errorMessage, '\n');
-}
-
-/*
- * Returns true if the PGOAUTHDEBUG=UNSAFE flag is set in the environment.
- */
-static bool
-__oauth_unsafe_debugging_enabled(void)
-{
-	const char *env = getenv("PGOAUTHDEBUG");
-
-	return (env && strcmp(env, "UNSAFE") == 0);
-}
-
-static int
-__pq_block_sigpipe(sigset_t *osigset, bool *sigpipe_pending)
-{
-	sigset_t	sigpipe_sigset;
-	sigset_t	sigset;
-
-	sigemptyset(&sigpipe_sigset);
-	sigaddset(&sigpipe_sigset, SIGPIPE);
-
-	/* Block SIGPIPE and save previous mask for later reset */
-	SOCK_ERRNO_SET(pthread_sigmask(SIG_BLOCK, &sigpipe_sigset, osigset));
-	if (SOCK_ERRNO)
-		return -1;
-
-	/* We can have a pending SIGPIPE only if it was blocked before */
-	if (sigismember(osigset, SIGPIPE))
-	{
-		/* Is there a pending SIGPIPE? */
-		if (sigpending(&sigset) != 0)
-			return -1;
-
-		if (sigismember(&sigset, SIGPIPE))
-			*sigpipe_pending = true;
-		else
-			*sigpipe_pending = false;
-	}
-	else
-		*sigpipe_pending = false;
-
-	return 0;
-}
-static void
-__pq_reset_sigpipe(sigset_t *osigset, bool sigpipe_pending, bool got_epipe)
-{
-	int			save_errno = SOCK_ERRNO;
-	int			signo;
-	sigset_t	sigset;
-
-	/* Clear SIGPIPE only if none was pending */
-	if (got_epipe && !sigpipe_pending)
-	{
-		if (sigpending(&sigset) == 0 &&
-			sigismember(&sigset, SIGPIPE))
-		{
-			sigset_t	sigpipe_sigset;
-
-			sigemptyset(&sigpipe_sigset);
-			sigaddset(&sigpipe_sigset, SIGPIPE);
-
-			sigwait(&sigpipe_sigset, &signo);
-		}
-	}
-
-	/* Restore saved block mask */
-	pthread_sigmask(SIG_SETMASK, osigset, NULL);
-
-	SOCK_ERRNO_SET(save_errno);
-}
 /*
  * Tears down the Curl handles and frees the async_ctx.
  */
@@ -421,7 +254,7 @@ free_async_ctx(PGconn *conn, struct async_ctx *actx)
 		CURLMcode	err = curl_multi_remove_handle(actx->curlm, actx->curl);
 
 		if (err)
-			__libpq_append_conn_error(conn,
+			libpq_append_conn_error(conn,
 									"libcurl easy handle removal failed: %s",
 									curl_multi_strerror(err));
 	}
@@ -441,7 +274,7 @@ free_async_ctx(PGconn *conn, struct async_ctx *actx)
 		CURLMcode	err = curl_multi_cleanup(actx->curlm);
 
 		if (err)
-			__libpq_append_conn_error(conn,
+			libpq_append_conn_error(conn,
 									"libcurl multi handle cleanup failed: %s",
 									curl_multi_strerror(err));
 	}
@@ -2656,8 +2489,9 @@ prompt_user(struct async_ctx *actx, PGconn *conn)
 		.verification_uri_complete = actx->authz.verification_uri_complete,
 		.expires_in = actx->authz.expires_in,
 	};
+	PQauthDataHook_type hook = PQgetAuthDataHook();
 
-	res = PQauthDataHook(PQAUTHDATA_PROMPT_OAUTH_DEVICE, conn, &prompt);
+	res = hook(PQAUTHDATA_PROMPT_OAUTH_DEVICE, conn, &prompt);
 
 	if (!res)
 	{
@@ -2725,7 +2559,7 @@ initialize_curl(PGconn *conn)
 		goto done;
 	else if (init_successful == PG_BOOL_NO)
 	{
-		__libpq_append_conn_error(conn,
+		libpq_append_conn_error(conn,
 								"curl_global_init previously failed during OAuth setup");
 		goto done;
 	}
@@ -2744,7 +2578,7 @@ initialize_curl(PGconn *conn)
 	 */
 	if (curl_global_init(CURL_GLOBAL_ALL & ~CURL_GLOBAL_WIN32) != CURLE_OK)
 	{
-		__libpq_append_conn_error(conn,
+		libpq_append_conn_error(conn,
 								"curl_global_init failed during OAuth setup");
 		init_successful = PG_BOOL_NO;
 		goto done;
@@ -2766,7 +2600,7 @@ initialize_curl(PGconn *conn)
 		 * In a downgrade situation, the damage is already done. Curl global
 		 * state may be corrupted. Be noisy.
 		 */
-		__libpq_append_conn_error(conn, "libcurl is no longer thread-safe\n"
+		libpq_append_conn_error(conn, "libcurl is no longer thread-safe\n"
 								"\tCurl initialization was reported thread-safe when libpq\n"
 								"\twas compiled, but the currently installed version of\n"
 								"\tlibcurl reports that it is not. Recompile libpq against\n"
@@ -2818,7 +2652,7 @@ pg_fe_run_oauth_flow_impl(PGconn *conn)
 		actx = calloc(1, sizeof(*actx));
 		if (!actx)
 		{
-			__libpq_append_conn_error(conn, "out of memory");
+			libpq_append_conn_error(conn, "out of memory");
 			return PGRES_POLLING_FAILED;
 		}
 
@@ -2826,7 +2660,7 @@ pg_fe_run_oauth_flow_impl(PGconn *conn)
 		actx->timerfd = -1;
 
 		/* Should we enable unsafe features? */
-		actx->debugging = __oauth_unsafe_debugging_enabled();
+		actx->debugging = oauth_unsafe_debugging_enabled();
 
 		state->async_ctx = actx;
 
@@ -3064,7 +2898,7 @@ pg_fe_run_oauth_flow(PGconn *conn)
 	 * difficult corner case to exercise in practice, and unfortunately it's
 	 * not really clear whether it's necessary in all cases.
 	 */
-	masked = (__pq_block_sigpipe(&osigset, &sigpipe_pending) == 0);
+	masked = (pq_block_sigpipe(&osigset, &sigpipe_pending) == 0);
 #endif
 
 	result = pg_fe_run_oauth_flow_impl(conn);
@@ -3076,7 +2910,7 @@ pg_fe_run_oauth_flow(PGconn *conn)
 		 * Undo the SIGPIPE mask. Assume we may have gotten EPIPE (we have no
 		 * way of knowing at this level).
 		 */
-		__pq_reset_sigpipe(&osigset, sigpipe_pending, true /* EPIPE, maybe */ );
+		pq_reset_sigpipe(&osigset, sigpipe_pending, true /* EPIPE, maybe */ );
 	}
 #endif
 

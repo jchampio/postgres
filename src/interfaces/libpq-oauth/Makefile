@@ -14,15 +14,18 @@ top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
 PGFILEDESC = "libpq-oauth - device authorization oauth support"
-NAME = pq-oauth
-SO_MAJOR_VERSION = 1
-SO_MINOR_VERSION = $(MAJORVERSION)
+
+# This is an internal module; we don't want an SONAME and therefore do not set
+# SO_MAJOR_VERSION. (We still put the major version into the name, to make it
+# obvious where the library belongs.)
+NAME = libpq-oauth-$(MAJORVERSION)
 
 override CPPFLAGS := -I$(libpq_srcdir) -I$(top_builddir)/src/port $(CPPFLAGS)
 
 OBJS = \
 	$(WIN32RES) \
-	fe-auth-oauth-curl.o
+	oauth-curl.o \
+	oauth-utils.o
 
 SHLIB_LINK_INTERNAL = $(libpq_pgport_shlib)
 SHLIB_LINK = -lcurl
@@ -33,7 +36,7 @@ SHLIB_EXPORTS = exports.txt
 PKG_CONFIG_REQUIRES_PRIVATE = libpq
 #
 # Make dependencies on pg_config_paths.h visible in all builds.
-fe-auth-oauth-curl.o: fe-auth-oauth-curl.c $(top_builddir)/src/port/pg_config_paths.h
+oauth-curl.o: oauth-curl.c $(top_builddir)/src/port/pg_config_paths.h
 
 $(top_builddir)/src/port/pg_config_paths.h:
 	$(MAKE) -C $(top_builddir)/src/port pg_config_paths.h

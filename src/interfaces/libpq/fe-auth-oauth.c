@@ -733,13 +733,10 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 #else
 	PostgresPollingStatusType (*flow) (PGconn *conn);
 	void		(*cleanup) (PGconn *conn);
+	pgthreadlock_t *threadlock_copy;
 
-	state->builtin_flow = dlopen(
-#if defined(__darwin__)
-								 "libpq-oauth.1.dylib",
-#else
-								 "libpq-oauth.so.1",
-#endif
+	/* libpq-oauth is versioned in lockstep; we don't export a stable ABI. */
+	state->builtin_flow = dlopen("libpq-oauth-" PG_MAJORVERSION DLSUFFIX,
 								 RTLD_NOW | RTLD_LOCAL);
 	if (!state->builtin_flow)
 	{
@@ -749,15 +746,18 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 
 	flow = dlsym(state->builtin_flow, "pg_fe_run_oauth_flow");
 	cleanup = dlsym(state->builtin_flow, "pg_fe_cleanup_oauth_flow");
+	threadlock_copy = dlsym(state->builtin_flow, "pg_g_threadlock");
 
-	if (!(flow && cleanup))
+	if (!(flow && cleanup && threadlock_copy))
 	{
 		fprintf(stderr, "failed dlsym: %s\n", dlerror()); // XXX
+		dlclose(state->builtin_flow);
 		return false;
 	}
 
 	conn->async_auth = flow;
 	conn->cleanup_async_auth = cleanup;
+	*threadlock_copy = pg_g_threadlock;
 
 	return true;
 #endif							/* !WIN32 */

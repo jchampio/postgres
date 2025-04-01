@@ -812,7 +812,6 @@ typedef int (*PQauthDataHook_type) (PGauthData type, PGconn *conn, void *data);
 extern void PQsetAuthDataHook(PQauthDataHook_type hook);
 extern PQauthDataHook_type PQgetAuthDataHook(void);
 extern int	PQdefaultAuthDataHook(PGauthData type, PGconn *conn, void *data);
-extern PQauthDataHook_type PQauthDataHook;
 
 /* === in encnames.c === */
 
