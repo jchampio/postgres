@@ -159,7 +159,7 @@ libpq_binddomain(void)
 			ldir = getenv("PGLOCALEDIR");
 			if (!ldir)
 				ldir = LOCALEDIR;
-			bindtextdomain(PG_TEXTDOMAIN("libpq"), ldir);
+			bindtextdomain(PG_TEXTDOMAIN("libpq-oauth"), ldir);
 			already_bound = true;
 		}
 
@@ -177,14 +177,14 @@ char *
 libpq_gettext(const char *msgid)
 {
 	libpq_binddomain();
-	return dgettext(PG_TEXTDOMAIN("libpq"), msgid);
+	return dgettext(PG_TEXTDOMAIN("libpq-oauth"), msgid);
 }
 
 char *
 libpq_ngettext(const char *msgid, const char *msgid_plural, unsigned long n)
 {
 	libpq_binddomain();
-	return dngettext(PG_TEXTDOMAIN("libpq"), msgid, msgid_plural, n);
+	return dngettext(PG_TEXTDOMAIN("libpq-oauth"), msgid, msgid_plural, n);
 }
 
 #endif							/* ENABLE_NLS */
