@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * fe-auth-oauth-curl.c
+ * oauth-curl.c
  *	   The libcurl implementation of OAuth/OIDC authentication, using the
  *	   OAuth Device Authorization Grant (RFC 8628).
  *
@@ -8,7 +8,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/interfaces/libpq/fe-auth-oauth-curl.c
+ *	  src/interfaces/libpq-oauth/oauth-curl.c
  *
  *-------------------------------------------------------------------------
  */
@@ -31,6 +31,8 @@
 #include "fe-auth-oauth.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
+#include "oauth-curl.h"
+#include "oauth-utils.h"
 
 /*
  * It's generally prudent to set a maximum response size to buffer in memory,
@@ -2487,8 +2489,9 @@ prompt_user(struct async_ctx *actx, PGconn *conn)
 		.verification_uri_complete = actx->authz.verification_uri_complete,
 		.expires_in = actx->authz.expires_in,
 	};
+	PQauthDataHook_type hook = PQgetAuthDataHook();
 
-	res = PQauthDataHook(PQAUTHDATA_PROMPT_OAUTH_DEVICE, conn, &prompt);
+	res = hook(PQAUTHDATA_PROMPT_OAUTH_DEVICE, conn, &prompt);
 
 	if (!res)
 	{
