@@ -22,6 +22,7 @@
 #include "fe-auth.h"
 #include "fe-auth-oauth.h"
 #include "mb/pg_wchar.h"
+#include "pg_config_paths.h"
 
 /* The exported OAuth callback mechanism. */
 static void *oauth_init(PGconn *conn, const char *password,
@@ -721,6 +722,21 @@ cleanup_user_oauth_flow(PGconn *conn)
 	state->async_ctx = NULL;
 }
 
+#ifndef USE_LIBCURL
+
+/*
+ * This configuration doesn't support the builtin flow.
+ *
+ * Alternative implementations are in fe-auth-oauth-dynamic/-static.c.
+ */
+bool
+use_builtin_flow(PGconn *conn, fe_oauth_state *state)
+{
+	return false;
+}
+
+#endif
+
 /*
  * Chooses an OAuth client flow for the connection, which will retrieve a Bearer
  * token for presentation to the server.
@@ -792,18 +808,10 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 		libpq_append_conn_error(conn, "user-defined OAuth flow failed");
 		goto fail;
 	}
-	else
+	else if (!use_builtin_flow(conn, state))
 	{
-#if USE_LIBCURL
-		/* Hand off to our built-in OAuth flow. */
-		conn->async_auth = pg_fe_run_oauth_flow;
-		conn->cleanup_async_auth = pg_fe_cleanup_oauth_flow;
-
-#else
 		libpq_append_conn_error(conn, "no custom OAuth flows are available, and libpq was not built with libcurl support");
 		goto fail;
-
-#endif
 	}
 
 	return true;

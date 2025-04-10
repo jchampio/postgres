@@ -33,12 +33,13 @@ typedef struct
 
 	PGconn	   *conn;
 	void	   *async_ctx;
+
+	void	   *builtin_flow;
 } fe_oauth_state;
 
-extern PostgresPollingStatusType pg_fe_run_oauth_flow(PGconn *conn);
-extern void pg_fe_cleanup_oauth_flow(PGconn *conn);
 extern void pqClearOAuthToken(PGconn *conn);
 extern bool oauth_unsafe_debugging_enabled(void);
+extern bool use_builtin_flow(PGconn *conn, fe_oauth_state *state);
 
 /* Mechanisms in fe-auth-oauth.c */
 extern const pg_fe_sasl_mech pg_oauth_mech;
