@@ -17,6 +17,10 @@ endif
 
 libpq_oauth_sources = files(
   'oauth-curl.c',
+)
+
+# The shared library needs additional glue symbols.
+libpq_oauth_so_sources = files(
   'oauth-utils.c',
 )
 
@@ -31,8 +35,16 @@ libpq_oauth_inc = include_directories('.', '../libpq', '../../port')
 # SO_MAJOR_VERSION.
 libpq_oauth_name = 'libpq-oauth-@0@'.format(pg_version_major)
 
-libpq_oauth_so = shared_module(libpq_oauth_name,
+libpq_oauth_st = static_library(libpq_oauth_name,
   libpq_oauth_sources,
+  include_directories: [libpq_oauth_inc, postgres_inc],
+  c_pch: pch_postgres_fe_h,
+  dependencies: [frontend_stlib_code, libpq_oauth_deps],
+  kwargs: default_lib_args,
+)
+
+libpq_oauth_so = shared_module(libpq_oauth_name,
+  libpq_oauth_sources + libpq_oauth_so_sources,
   include_directories: [libpq_oauth_inc, postgres_inc],
   c_pch: pch_postgres_fe_h,
   dependencies: [frontend_shlib_code, libpq, libpq_oauth_deps],

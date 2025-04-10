@@ -18,6 +18,7 @@ libpq_sources = files(
   'pqexpbuffer.c',
 )
 libpq_so_sources = [] # for shared lib, in addition to the above
+libpq_st_sources = [] # for static lib, in addition to the above
 
 if host_system == 'windows'
   libpq_sources += files('pthread-win32.c', 'win32.c')
@@ -38,6 +39,13 @@ if gssapi.found()
   )
 endif
 
+# Add the correct implementations of the OAuth flow, if requested, for both
+# shared and static builds.
+if libcurl.found()
+  libpq_so_sources += files('fe-auth-oauth-dynamic.c')
+  libpq_st_sources += files('fe-auth-oauth-static.c')
+endif
+
 export_file = custom_target('libpq.exports',
   kwargs: gen_export_kwargs,
 )
@@ -55,7 +63,7 @@ libpq_c_args = ['-DSO_MAJOR_VERSION=5']
 # more complexity than its worth (reusing object files requires also linking
 # to the library on windows or breaks precompiled headers).
 libpq_st = static_library('libpq',
-  libpq_sources,
+  libpq_sources + libpq_st_sources,
   include_directories: [libpq_inc],
   c_args: libpq_c_args,
   c_pch: pch_postgres_fe_h,
