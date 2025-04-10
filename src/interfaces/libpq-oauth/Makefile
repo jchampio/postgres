@@ -17,14 +17,21 @@ PGFILEDESC = "libpq-oauth - device authorization OAuth support"
 
 # This is an internal module; we don't want an SONAME and therefore do not set
 # SO_MAJOR_VERSION.
-NAME = libpq-oauth-$(MAJORVERSION)
+NAME = pq-oauth-$(MAJORVERSION)
+
+# Force the name "libpq-oauth" for both the static and shared libraries.
+override shlib := lib$(NAME)$(DLSUFFIX)
+override stlib := lib$(NAME).a
 
 override CPPFLAGS := -I$(libpq_srcdir) -I$(top_builddir)/src/port $(LIBCURL_CPPFLAGS) $(CPPFLAGS)
 
 OBJS = \
 	$(WIN32RES) \
-	oauth-curl.o \
-	oauth-utils.o
+	oauth-curl.o
+
+# The shared library needs additional glue symbols.
+$(shlib): OBJS += oauth-utils.o
+$(shlib): oauth-utils.o
 
 SHLIB_LINK_INTERNAL = $(libpq_pgport_shlib)
 SHLIB_LINK = $(LIBCURL_LDFLAGS) $(LIBCURL_LDLIBS)
@@ -34,22 +41,25 @@ SHLIB_EXPORTS = exports.txt
 # Disable -bundle_loader on macOS.
 BE_DLLLIBS =
 
-# Make dependencies on pg_config_paths.h visible in all builds.
-oauth-curl.o: oauth-curl.c $(top_builddir)/src/port/pg_config_paths.h
-
-$(top_builddir)/src/port/pg_config_paths.h:
-	$(MAKE) -C $(top_builddir)/src/port pg_config_paths.h
-
-all: all-lib
+# By default, a library without an SONAME doesn't get a static library, so we
+# add it to the build explicitly.
+all: all-lib all-static-lib
 
 # Shared library stuff
 include $(top_srcdir)/src/Makefile.shlib
 
-install: all installdirs install-lib
+# Ignore the standard rules for SONAME-less installation; we want both the
+# static and shared libraries to go into libdir.
+install: all installdirs $(stlib) $(shlib)
+	$(INSTALL_SHLIB) $(shlib) '$(DESTDIR)$(libdir)/$(shlib)'
+	$(INSTALL_STLIB) $(stlib) '$(DESTDIR)$(libdir)/$(stlib)'
 
-installdirs: installdirs-lib
+installdirs:
+	$(MKDIR_P) '$(DESTDIR)$(libdir)'
 
-uninstall: uninstall-lib
+uninstall:
+	rm -f '$(DESTDIR)$(libdir)/$(stlib)'
+	rm -f '$(DESTDIR)$(libdir)/$(shlib)'
 
 clean distclean: clean-lib
-	rm -f $(OBJS)
+	rm -f $(OBJS) oauth-utils.o
