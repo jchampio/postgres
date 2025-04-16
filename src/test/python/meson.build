@@ -3,7 +3,7 @@
 subdir('server')
 
 pytest_env = {
-  'with_libcurl': libcurl.found() ? 'yes' : 'no',
+  'with_libcurl': oauth_flow_supported ? 'yes' : 'no',
 
   # Point to the default database; the tests will create their own databases as
   # needed.
