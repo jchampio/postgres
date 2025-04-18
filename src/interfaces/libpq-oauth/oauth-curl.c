@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * fe-auth-oauth-curl.c
+ * oauth-curl.c
  *	   The libcurl implementation of OAuth/OIDC authentication, using the
  *	   OAuth Device Authorization Grant (RFC 8628).
  *
@@ -8,7 +8,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/interfaces/libpq/fe-auth-oauth-curl.c
+ *	  src/interfaces/libpq-oauth/oauth-curl.c
  *
  *-------------------------------------------------------------------------
  */
@@ -17,20 +17,23 @@
 
 #include <curl/curl.h>
 #include <math.h>
-#ifdef HAVE_SYS_EPOLL_H
+#include <unistd.h>
+
+#if defined(HAVE_SYS_EPOLL_H)
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
-#endif
-#ifdef HAVE_SYS_EVENT_H
+#elif defined(HAVE_SYS_EVENT_H)
 #include <sys/event.h>
+#else
+#error libpq-oauth is not supported on this platform
 #endif
-#include <unistd.h>
 
 #include "common/jsonapi.h"
 #include "fe-auth.h"
 #include "fe-auth-oauth.h"
-#include "libpq-int.h"
 #include "mb/pg_wchar.h"
+#include "oauth-curl.h"
+#include "oauth-utils.h"
 
 /*
  * It's generally prudent to set a maximum response size to buffer in memory,
@@ -1110,7 +1113,7 @@ parse_access_token(struct async_ctx *actx, struct token *tok)
 static bool
 setup_multiplexer(struct async_ctx *actx)
 {
-#ifdef HAVE_SYS_EPOLL_H
+#if defined(HAVE_SYS_EPOLL_H)
 	struct epoll_event ev = {.events = EPOLLIN};
 
 	actx->mux = epoll_create1(EPOLL_CLOEXEC);
@@ -1134,8 +1137,7 @@ setup_multiplexer(struct async_ctx *actx)
 	}
 
 	return true;
-#endif
-#ifdef HAVE_SYS_EVENT_H
+#elif defined(HAVE_SYS_EVENT_H)
 	actx->mux = kqueue();
 	if (actx->mux < 0)
 	{
@@ -1158,10 +1160,9 @@ setup_multiplexer(struct async_ctx *actx)
 	}
 
 	return true;
+#else
+#error setup_multiplexer is not implemented on this platform
 #endif
-
-	actx_error(actx, "libpq does not support the Device Authorization flow on this platform");
-	return false;
 }
 
 /*
@@ -1174,7 +1175,7 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 {
 	struct async_ctx *actx = ctx;
 
-#ifdef HAVE_SYS_EPOLL_H
+#if defined(HAVE_SYS_EPOLL_H)
 	struct epoll_event ev = {0};
 	int			res;
 	int			op = EPOLL_CTL_ADD;
@@ -1230,8 +1231,7 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 	}
 
 	return 0;
-#endif
-#ifdef HAVE_SYS_EVENT_H
+#elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev[2] = {0};
 	struct kevent ev_out[2];
 	struct timespec timeout = {0};
@@ -1312,10 +1312,9 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 	}
 
 	return 0;
+#else
+#error register_socket is not implemented on this platform
 #endif
-
-	actx_error(actx, "libpq does not support multiplexer sockets on this platform");
-	return -1;
 }
 
 /*
@@ -1334,7 +1333,7 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 static bool
 set_timer(struct async_ctx *actx, long timeout)
 {
-#if HAVE_SYS_EPOLL_H
+#if defined(HAVE_SYS_EPOLL_H)
 	struct itimerspec spec = {0};
 
 	if (timeout < 0)
@@ -1363,8 +1362,7 @@ set_timer(struct async_ctx *actx, long timeout)
 	}
 
 	return true;
-#endif
-#ifdef HAVE_SYS_EVENT_H
+#elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev;
 
 #ifdef __NetBSD__
@@ -1419,10 +1417,9 @@ set_timer(struct async_ctx *actx, long timeout)
 	}
 
 	return true;
+#else
+#error set_timer is not implemented on this platform
 #endif
-
-	actx_error(actx, "libpq does not support timers on this platform");
-	return false;
 }
 
 /*
@@ -1433,7 +1430,7 @@ set_timer(struct async_ctx *actx, long timeout)
 static int
 timer_expired(struct async_ctx *actx)
 {
-#if HAVE_SYS_EPOLL_H
+#if defined(HAVE_SYS_EPOLL_H)
 	struct itimerspec spec = {0};
 
 	if (timerfd_gettime(actx->timerfd, &spec) < 0)
@@ -1453,8 +1450,7 @@ timer_expired(struct async_ctx *actx)
 	/* If the remaining time to expiration is zero, we're done. */
 	return (spec.it_value.tv_sec == 0
 			&& spec.it_value.tv_nsec == 0);
-#endif
-#ifdef HAVE_SYS_EVENT_H
+#elif defined(HAVE_SYS_EVENT_H)
 	int			res;
 
 	/* Is the timer queue ready? */
@@ -1466,10 +1462,9 @@ timer_expired(struct async_ctx *actx)
 	}
 
 	return (res > 0);
+#else
+#error timer_expired is not implemented on this platform
 #endif
-
-	actx_error(actx, "libpq does not support timers on this platform");
-	return -1;
 }
 
 /*
@@ -2487,8 +2482,9 @@ prompt_user(struct async_ctx *actx, PGconn *conn)
 		.verification_uri_complete = actx->authz.verification_uri_complete,
 		.expires_in = actx->authz.expires_in,
 	};
+	PQauthDataHook_type hook = PQgetAuthDataHook();
 
-	res = PQauthDataHook(PQAUTHDATA_PROMPT_OAUTH_DEVICE, conn, &prompt);
+	res = hook(PQAUTHDATA_PROMPT_OAUTH_DEVICE, conn, &prompt);
 
 	if (!res)
 	{

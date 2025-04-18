@@ -107,6 +107,7 @@ os_deps = []
 backend_both_deps = []
 backend_deps = []
 libpq_deps = []
+libpq_oauth_deps = []
 
 pg_sysroot = ''
 
@@ -860,13 +861,13 @@ endif
 ###############################################################
 
 libcurlopt = get_option('libcurl')
+oauth_flow_supported = false
+
 if not libcurlopt.disabled()
   # Check for libcurl 7.61.0 or higher (corresponding to RHEL8 and the ability
   # to explicitly set TLS 1.3 ciphersuites).
   libcurl = dependency('libcurl', version: '>= 7.61.0', required: libcurlopt)
   if libcurl.found()
-    cdata.set('USE_LIBCURL', 1)
-
     # Check to see whether the current platform supports thread-safe Curl
     # initialization.
     libcurl_threadsafe_init = false
@@ -936,6 +937,22 @@ if not libcurlopt.disabled()
 *** to use it with libpq.''')
       endif
     endif
+  endif
+
+  # Check that the current platform supports our builtin flow. This requires
+  # libcurl and one of either epoll or kqueue.
+  oauth_flow_supported = (
+    libcurl.found()
+    and (cc.check_header('sys/event.h', required: false,
+                         args: test_c_args, include_directories: postgres_inc)
+         or cc.check_header('sys/epoll.h', required: false,
+                            args: test_c_args, include_directories: postgres_inc))
+  )
+
+  if oauth_flow_supported
+    cdata.set('USE_LIBCURL', 1)
+  elif libcurlopt.enabled()
+    error('client OAuth is not supported on this platform')
   endif
 
 else
@@ -3272,17 +3289,18 @@ libpq_deps += [
 
   gssapi,
   ldap_r,
-  # XXX libcurl must link after libgssapi_krb5 on FreeBSD to avoid segfaults
-  # during gss_acquire_cred(). This is possibly related to Curl's Heimdal
-  # dependency on that platform?
-  libcurl,
   libintl,
   ssl,
 ]
 
+libpq_oauth_deps += [
+  libcurl,
+]
+
 subdir('src/interfaces/libpq')
-# fe_utils depends on libpq
+# fe_utils and libpq-oauth depends on libpq
 subdir('src/fe_utils')
+subdir('src/interfaces/libpq-oauth')
 
 # for frontend binaries
 frontend_code = declare_dependency(
@@ -3595,6 +3613,9 @@ else
 endif
 
 testwrap = files('src/tools/testwrap')
+make_venv = files('src/tools/make_venv')
+
+checked_working_venv = false
 
 foreach test_dir : tests
   testwrap_base = [
@@ -3759,6 +3780,106 @@ foreach test_dir : tests
             '--testname', onetap_p,
             '--', test_command,
             test_dir['sd'] / onetap,
+          ],
+        )
+      endforeach
+      install_suites += test_group
+    elif kind == 'pytest'
+      venv_name = test_dir['name'] + '_venv'
+      venv_path = meson.build_root() / venv_name
+
+      # The Python tests require a working venv module. This is part of the
+      # standard library, but some platforms disable it until a separate package
+      # is installed. Those same platforms don't provide an easy way to check
+      # whether the venv command will work until the first time you try it, so
+      # we decide whether or not to enable these tests on the fly.
+      if not checked_working_venv
+        cmd = run_command(python, '-m', 'venv', venv_path, check: false)
+
+        have_working_venv = (cmd.returncode() == 0)
+        if not have_working_venv
+          warning('A working Python venv module is required to run Python tests.')
+        endif
+
+        checked_working_venv = true
+      endif
+
+      if not have_working_venv
+        continue
+      endif
+
+      # Make sure the temporary installation is in PATH (necessary both for
+      # --temp-instance and for any pip modules compiling against libpq, like
+      # psycopg2).
+      env = test_env
+      env.prepend('PATH', temp_install_bindir, test_dir['bd'])
+
+      foreach name, value : t.get('env', {})
+        env.set(name, value)
+      endforeach
+
+      reqs = files(t['requirements'])
+      test('install_' + venv_name,
+        python,
+        args: [ make_venv, '--requirements', reqs, venv_path ],
+        env: env,
+        priority: setup_tests_priority - 1,  # must run after tmp_install
+        is_parallel: false,
+        suite: ['setup'],
+        timeout: 60,  # 30s is too short for the cryptography package compile
+      )
+
+      test_group = test_dir['name']
+      test_output = test_result_dir / test_group / kind
+      test_kwargs = {
+        #'protocol': 'tap',
+        'suite': test_group,
+        'timeout': 1000,
+        'depends': test_deps,
+        'env': env,
+      } + t.get('test_kwargs', {})
+
+      if fs.is_dir(venv_path / 'Scripts')
+        # Windows virtualenv layout
+        pytest = venv_path / 'Scripts' / 'py.test'
+      else
+        pytest = venv_path / 'bin' / 'py.test'
+      endif
+
+      test_command = [
+        pytest,
+        # Avoid running these tests against an existing database.
+        '--temp-instance', test_output / 'data',
+
+        # FIXME pytest-tap's stream feature accidentally suppresses errors that
+        # are critical for debugging:
+        #     https://github.com/python-tap/pytest-tap/issues/30
+        # Don't use the meson TAP protocol for now...
+        #'--tap-stream',
+      ]
+
+      foreach pyt : t['tests']
+        # Similarly to TAP, strip ./ and .py to make the names prettier
+        pyt_p = pyt
+        if pyt_p.startswith('./')
+          pyt_p = pyt_p.split('./')[1]
+        endif
+        if pyt_p.endswith('.py')
+          pyt_p = fs.stem(pyt_p)
+        endif
+
+        testwrap_pytest = testwrap_base + [
+          '--testgroup', test_group,
+          '--testname', pyt_p,
+          '--skip-without-extra', 'python',
+        ]
+
+        test(test_group / pyt_p,
+          python,
+          kwargs: test_kwargs,
+          args: testwrap_pytest + [
+            '--', test_command,
+            test_dir['sd'] / pyt,
           ],
         )
       endforeach
