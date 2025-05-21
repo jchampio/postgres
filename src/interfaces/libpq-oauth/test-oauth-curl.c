@@ -87,6 +87,7 @@ test_set_timer(void)
 
 	Assert(res != -1);
 	ok(res > 0, "expired timer: PQsocketPoll is ready");
+	ok(timer_expired(actx) == 1, "expired timer: timer_expired() returns 1");
 
 	/* Resetting the timer far in the future should unset the ready signal. */
 	Assert(set_timer(actx, INT_MAX));
@@ -94,6 +95,8 @@ test_set_timer(void)
 
 	Assert(res != -1);
 	ok(res == 0, "far-future timer, zero timeout: PQsocketPoll is not ready");
+	ok(timer_expired(actx) == 0,
+	   "far-future timer, zero timeout: timer_expired() returns 0");
 
 	/* Setting another zero-duration timer should override the previous one. */
 	Assert(set_timer(actx, 0));
@@ -101,6 +104,7 @@ test_set_timer(void)
 
 	Assert(res != -1);
 	ok(res > 0, "re-expired timer: PQsocketPoll is ready");
+	ok(timer_expired(actx) == 1, "re-expired timer: timer_expired() returns 1");
 
 	/* And disabling that timer should once again unset the ready signal. */
 	Assert(set_timer(actx, -1));
@@ -108,6 +112,8 @@ test_set_timer(void)
 
 	Assert(res != -1);
 	ok(res == 0, "disabled timer, zero timeout: PQsocketPoll is not ready");
+	ok(timer_expired(actx) == 0,
+	   "disabled timer, zero timeout: timer_expired() returns 0");
 
 	free_test_actx(actx);
 }
