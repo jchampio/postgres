@@ -79,5 +79,24 @@ uninstall:
 	rm -f '$(DESTDIR)$(libdir)/$(stlib)'
 	rm -f '$(DESTDIR)$(libdir)/$(shlib)'
 
+.PHONY: all-tests
+all-tests: oauth_tests$(X)
+
+CPPFLAGS_TEST := $(CPPFLAGS) $(CPPFLAGS_SHLIB) -DBUILD_OAUTH_UNIT_TESTS
+
+oauth-curl_test.o: %_test.o: %.c %.o
+	$(CC) $(CFLAGS) $(CPPFLAGS_TEST) -c $< -o $@
+
+oauth_tests$(X): oauth-curl_test.o oauth-utils.o $(WIN32RES) | submake-libpgport submake-libpq
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) $(LDFLAGS_EX) $(SHLIB_LINK) -o $@
+
+check: all-tests
+	$(prove_check)
+
+installcheck: all-tests
+	$(prove_installcheck)
+
 clean distclean: clean-lib
 	rm -f $(OBJS) $(OBJS_STATIC) $(OBJS_SHLIB)
+	rm -f oauth-curl_test.o oauth_tests$(X)
+	rm -rf tmp_check

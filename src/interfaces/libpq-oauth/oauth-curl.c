@@ -83,6 +83,20 @@
 #define MAX_OAUTH_RESPONSE_SIZE (256 * 1024)
 
 /*
+ * Similarly, a limit on the maximum JSON nesting level keeps a server from
+ * running us out of stack space. A common nesting level in practice is 2 (for a
+ * top-level object containing arrays of strings). As of May 2025, the maximum
+ * depth for standard server metadata appears to be 6, if the document contains
+ * a full JSON Web Key Set in its "jwks" parameter.
+ *
+ * Since it's easy to nest JSON, and the number of parameters and key types
+ * keeps growing, take a healthy buffer of 16. (If this ever proves to be a
+ * problem in practice, we may want to switch over to the incremental JSON
+ * parser instead of playing with this parameter.)
+ */
+#define MAX_OAUTH_NESTING_LEVEL 16
+
+/*
  * Parsed JSON Representations
  *
  * As a general rule, we parse and cache only the fields we're currently using.
@@ -495,6 +509,12 @@ oauth_json_object_start(void *state)
 	}
 
 	++ctx->nested;
+	if (ctx->nested > MAX_OAUTH_NESTING_LEVEL)
+	{
+		oauth_parse_set_error(ctx, "JSON is too deeply nested");
+		return JSON_SEM_ACTION_FAILED;
+	}
+
 	return JSON_SUCCESS;
 }
 
@@ -599,6 +619,12 @@ oauth_json_array_start(void *state)
 	}
 
 	++ctx->nested;
+	if (ctx->nested > MAX_OAUTH_NESTING_LEVEL)
+	{
+		oauth_parse_set_error(ctx, "JSON is too deeply nested");
+		return JSON_SEM_ACTION_FAILED;
+	}
+
 	return JSON_SUCCESS;
 }
 
@@ -1394,6 +1420,11 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s timer: %ld ms\n",
+				(timeout < 0 ? "Removed" : "Set"),
+				timeout);
+
 	return true;
 #elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev;
@@ -1433,7 +1464,12 @@ set_timer(struct async_ctx *actx, long timeout)
 
 	/* If we're not adding a timer, we're done. */
 	if (timeout < 0)
+	{
+		if (actx->debugging)
+			fprintf(stderr, "Removed timer: %ld ms\n", timeout);
+
 		return true;
+	}
 
 	EV_SET(&ev, 1, EVFILT_TIMER, (EV_ADD | EV_ONESHOT), 0, timeout, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0)
@@ -1448,6 +1484,9 @@ set_timer(struct async_ctx *actx, long timeout)
 		actx_error(actx, "adding kqueue timer to multiplexer: %m");
 		return false;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "Added timer: %ld ms\n", timeout);
 
 	return true;
 #else
@@ -1493,6 +1532,9 @@ timer_expired(struct async_ctx *actx)
 		actx_error(actx, "checking kqueue for timeout: %m");
 		return -1;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "timer has %sexpired\n", (res > 0 ? "" : "not "));
 
 	return (res > 0);
 #else
@@ -1840,6 +1882,17 @@ drive_request(struct async_ctx *actx)
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
+
+	if (actx->debugging)
+		fprintf(stderr, "In drive_request\n");
+
+	/*
+	if (timer_expired(actx))
+	{
+		if (!set_timer(actx, -1))
+			return PGRES_POLLING_FAILED;
+	}
+	*/
 
 	if (actx->running)
 	{
@@ -2947,3 +3000,7 @@ pg_fe_run_oauth_flow(PGconn *conn)
 
 	return result;
 }
+
+#ifdef BUILD_OAUTH_UNIT_TESTS
+#include "test-oauth-curl.c"
+#endif
