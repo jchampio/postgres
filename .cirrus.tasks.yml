@@ -281,7 +281,7 @@ task:
         UUID: -Duuid=e2fs
         TCL: -Dtcl_version=tcl86
       setup_additional_packages_script: |
-        pkg_add -I security/py-cryptography
+        pkg_add -I py3-cryptography
       # Always core dump to ${CORE_DUMP_DIR}
       set_core_dump_script: sysctl -w kern.nosuidcoredump=2
       <<: *openbsd_task_template
