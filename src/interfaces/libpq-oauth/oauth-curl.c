@@ -278,6 +278,7 @@ struct async_ctx
 	bool		user_prompted;	/* have we already sent the authz prompt? */
 	bool		used_basic_auth;	/* did we send a client secret? */
 	bool		debugging;		/* can we give unsafe developer assistance? */
+	int			dbg_num_calls;	/* (debug mode) how many times were we called? */
 
 #if defined(HAVE_SYS_EVENT_H)
 	int			nevents;		/* how many events are we waiting on? */
@@ -3074,6 +3075,8 @@ PostgresPollingStatusType
 pg_fe_run_oauth_flow(PGconn *conn)
 {
 	PostgresPollingStatusType result;
+	fe_oauth_state *state = conn_sasl_state(conn);
+	struct async_ctx *actx;
 #ifndef WIN32
 	sigset_t	osigset;
 	bool		sigpipe_pending;
@@ -3101,6 +3104,25 @@ pg_fe_run_oauth_flow(PGconn *conn)
 #endif
 
 	result = pg_fe_run_oauth_flow_impl(conn);
+
+	/*
+	 * To assist with finding bugs in drain_socket_events() and
+	 * drain_timer_events(), when we're in debug mode, track the total number
+	 * of calls to this function and print that at the end of the flow.
+	 *
+	 * Be careful that state->async_ctx could be NULL if early initialization
+	 * fails during the first call.
+	 */
+	actx = state->async_ctx;
+	Assert(actx || result == PGRES_POLLING_FAILED);
+
+	if (actx && actx->debugging)
+	{
+		actx->dbg_num_calls++;
+		if (result == PGRES_POLLING_OK || result == PGRES_POLLING_FAILED)
+			fprintf(stderr, "[libpq] total number of polls: %d\n",
+					actx->dbg_num_calls);
+	}
 
 #ifndef WIN32
 	if (masked)
