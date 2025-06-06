@@ -275,6 +275,7 @@ struct async_ctx
 	struct device_authz authz;
 
 	int			running;		/* is asynchronous work in progress? */
+	bool		timer_running;	/* is the timer armed? */
 	bool		user_prompted;	/* have we already sent the authz prompt? */
 	bool		used_basic_auth;	/* did we send a client secret? */
 	bool		debugging;		/* can we give unsafe developer assistance? */
@@ -1387,13 +1388,16 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
  *
  * To meet Curl requirements for the CURLMOPT_TIMERFUNCTION, implementations of
  * set_timer must handle repeated calls by fully discarding any previous running
- * or expired timer.
+ * or expired timer. actx->timer_running must be updated here as well, to let
+ * pg_fe_run_oauth_flow() guard against stuck timer events.
  */
 static bool
 set_timer(struct async_ctx *actx, long timeout)
 {
 #if defined(HAVE_SYS_EPOLL_H)
 	struct itimerspec spec = {0};
+
+	actx->timer_running = (timeout >= 0);
 
 	if (timeout < 0)
 	{
@@ -1420,9 +1424,16 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s timer: %ld ms\n",
+				(timeout < 0 ? "Removed" : "Set"),
+				timeout);
+
 	return true;
 #elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev;
+
+	actx->timer_running = (timeout >= 0);
 
 #ifdef __NetBSD__
 
@@ -1459,7 +1470,12 @@ set_timer(struct async_ctx *actx, long timeout)
 
 	/* If we're not adding a timer, we're done. */
 	if (timeout < 0)
+	{
+		if (actx->debugging)
+			fprintf(stderr, "Removed timer: %ld ms\n", timeout);
+
 		return true;
+	}
 
 	EV_SET(&ev, 1, EVFILT_TIMER, (EV_ADD | EV_ONESHOT), 0, timeout, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0)
@@ -1475,6 +1491,9 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "Added timer: %ld ms\n", timeout);
+
 	return true;
 #else
 #error set_timer is not implemented on this platform
@@ -1483,42 +1502,25 @@ set_timer(struct async_ctx *actx, long timeout)
 
 /*
  * Returns 1 if the timeout in the multiplexer set has expired since the last
- * call to set_timer(), 0 if the timer is still running, or -1 (with an
- * actx_error() report) if the timer cannot be queried.
+ * call to set_timer(), 0 if the timer is either still running or disarmed, or
+ * -1 (with an actx_error() report) if the timer cannot be queried.
  */
 static int
 timer_expired(struct async_ctx *actx)
 {
-#if defined(HAVE_SYS_EPOLL_H)
-	struct itimerspec spec = {0};
-
-	if (timerfd_gettime(actx->timerfd, &spec) < 0)
-	{
-		actx_error(actx, "getting timerfd value: %m");
-		return -1;
-	}
-
-	/*
-	 * This implementation assumes we're using single-shot timers. If you
-	 * change to using intervals, you'll need to reimplement this function
-	 * too, possibly with the read() or select() interfaces for timerfd.
-	 */
-	Assert(spec.it_interval.tv_sec == 0
-		   && spec.it_interval.tv_nsec == 0);
-
-	/* If the remaining time to expiration is zero, we're done. */
-	return (spec.it_value.tv_sec == 0
-			&& spec.it_value.tv_nsec == 0);
-#elif defined(HAVE_SYS_EVENT_H)
+#if defined(HAVE_SYS_EPOLL_H) || defined(HAVE_SYS_EVENT_H)
 	int			res;
 
-	/* Is the timer queue ready? */
+	/* Is the timer ready? */
 	res = PQsocketPoll(actx->timerfd, 1 /* forRead */ , 0, 0);
 	if (res < 0)
 	{
-		actx_error(actx, "checking kqueue for timeout: %m");
+		actx_error(actx, "checking timer expiration: %m");
 		return -1;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "timer has %sexpired\n", (res > 0 ? "" : "not "));
 
 	return (res > 0);
 #else
@@ -1866,6 +1868,17 @@ drive_request(struct async_ctx *actx)
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
+
+	if (actx->debugging)
+		fprintf(stderr, "In drive_request\n");
+
+	/*
+	if (timer_expired(actx))
+	{
+		if (!set_timer(actx, -1))
+			return PGRES_POLLING_FAILED;
+	}
+	*/
 
 	if (actx->running)
 	{
@@ -2765,24 +2778,29 @@ pg_fe_run_oauth_flow_impl(PGconn *conn)
 				}
 
 			case OAUTH_STEP_WAIT_INTERVAL:
-
-				/*
-				 * The client application is supposed to wait until our timer
-				 * expires before calling PQconnectPoll() again, but that
-				 * might not happen. To avoid sending a token request early,
-				 * check the timer before continuing.
-				 */
-				if (!timer_expired(actx))
 				{
-					set_conn_altsock(conn, actx->timerfd);
-					return PGRES_POLLING_READING;
+					/*
+					 * The client application is supposed to wait until our
+					 * timer expires before calling PQconnectPoll() again, but
+					 * that might not happen. To avoid sending a token request
+					 * early, check the timer before continuing.
+					 */
+					int			expired = timer_expired(actx);
+
+					if (expired < 0)
+						goto error_return;
+					else if (!expired)
+					{
+						set_conn_altsock(conn, actx->timerfd);
+						return PGRES_POLLING_READING;
+					}
+
+					/* Disable the expired timer. */
+					if (!set_timer(actx, -1))
+						goto error_return;
+
+					break;
 				}
-
-				/* Disable the expired timer. */
-				if (!set_timer(actx, -1))
-					goto error_return;
-
-				break;
 		}
 
 		/*
@@ -2932,6 +2950,8 @@ PostgresPollingStatusType
 pg_fe_run_oauth_flow(PGconn *conn)
 {
 	PostgresPollingStatusType result;
+	fe_oauth_state *state = conn_sasl_state(conn);
+	struct async_ctx *actx = state->async_ctx;
 #ifndef WIN32
 	sigset_t	osigset;
 	bool		sigpipe_pending;
@@ -2958,7 +2978,24 @@ pg_fe_run_oauth_flow(PGconn *conn)
 	masked = (pq_block_sigpipe(&osigset, &sigpipe_pending) == 0);
 #endif
 
+	if (actx && actx->debugging)
+	{
+		if (timer_expired(actx))
+			actx->timer_running = false;
+	}
+
 	result = pg_fe_run_oauth_flow_impl(conn);
+
+	if (actx && actx->debugging)
+	{
+		if (timer_expired(actx)
+			&& !actx->timer_running
+			&& result != PGRES_POLLING_FAILED)
+		{
+			Assert(false);
+			fprintf(stderr, "warning: OAuth timer is stuck read-ready\n");
+		}
+	}
 
 #ifndef WIN32
 	if (masked)
