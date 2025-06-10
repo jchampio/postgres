@@ -1311,12 +1311,18 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 	switch (what)
 	{
 		case CURL_POLL_IN:
+			/* Any previous write filter needs to be deleted. */
 			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
+			nev++;
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
 			nev++;
 			break;
 
 		case CURL_POLL_OUT:
+			/* As above, any previous read filter needs to go. */
 			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
+			nev++;
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
 			nev++;
 			break;
 
