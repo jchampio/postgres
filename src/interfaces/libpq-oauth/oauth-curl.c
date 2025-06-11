@@ -1553,6 +1553,41 @@ timer_expired(struct async_ctx *actx)
 #endif
 }
 
+static bool
+drain_socket_events(struct async_ctx *actx)
+{
+#if defined(HAVE_SYS_EPOLL_H)
+	/* The epoll implementation doesn't need to drain pending events. */
+	return true;
+#elif defined(HAVE_SYS_EVENT_H)
+	return true; /* TODO */
+#else
+#error drain_socket_events is not implemented on this platform
+#endif
+}
+
+static bool
+drain_timer_events(struct async_ctx *actx, bool *expired)
+{
+	int			res;
+
+	res = timer_expired(actx);
+	if (res < 0)
+		return false;
+
+	if (res > 0)
+	{
+		/* Timer is expired. Disable it to clear the signal in the mux. */
+		if (!set_timer(actx, -1))
+			return false;
+	}
+
+	if (expired)
+		*expired = (res > 0);
+
+	return true;
+}
+
 /*
  * Adds or removes timeouts from the multiplexer set, as directed by the
  * libcurl multi handle.

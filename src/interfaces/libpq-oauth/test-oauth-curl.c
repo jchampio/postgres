@@ -239,6 +239,25 @@ test_set_timer(void)
 	mux_is_not_ready(actx->mux, "when timer is unset");
 	is(timer_expired(actx), 0, "timer_expired() returns 0 when timer is unset");
 
+	{
+		bool		expired;
+
+		/* Make sure drain_timer_events() functions correctly as well. */
+		Assert(set_timer(actx, 0));
+		mux_is_ready(actx->mux, deadline, "when timer is re-expired (drain_timer_events)");
+
+		Assert(drain_timer_events(actx, &expired));
+		mux_is_not_ready(actx->mux, "when timer is drained after expiring");
+		is(expired, 1, "drain_timer_events() reports expiration");
+		is(timer_expired(actx), 0, "timer_expired() returns 0 after timer is drained");
+
+		/* A second drain should do nothing. */
+		Assert(drain_timer_events(actx, &expired));
+		mux_is_not_ready(actx->mux, "when timer is drained a second time");
+		is(expired, 0, "drain_timer_events() reports no expiration");
+		is(timer_expired(actx), 0, "timer_expired() still returns 0");
+	}
+
 	free_test_actx(actx);
 }
 
@@ -295,8 +314,12 @@ test_register_socket(void)
 		Assert(register_socket(NULL, rfd, in_event, actx, NULL) == 0);
 		mux_is_ready(actx->mux, deadline, "when readable fd is re-added");
 
-		/* Draining the pipe should unset the multiplexer again. */
+		/*
+		 * Draining the pipe should unset the multiplexer again, once the old
+		 * event is drained.
+		 */
 		Assert(drain_pipe(rfd, 1));
+		Assert(drain_socket_events(actx));
 		mux_is_not_ready(actx->mux, "when fd is drained");
 
 		/* Listen on the write side. An empty buffer should be writable. */
@@ -315,13 +338,17 @@ test_register_socket(void)
 		{
 			ssize_t		written;
 
-			/* Fill the pipe. */
+			/*
+			 * Fill the pipe. Once the old writable event is drained, the mux
+			 * should not be ready.
+			 */
 			Assert((written = fill_pipe(wfd)) > 0);
 			printf("# pipe buffer is full at %zd bytes\n", written);
 
+			Assert(drain_socket_events(actx));
 			mux_is_not_ready(actx->mux, "when fd buffer is full");
 
-			/* Drain it again. */
+			/* Drain the pipe again. */
 			Assert(drain_pipe(rfd, written));
 			mux_is_ready(actx->mux, deadline, "when fd buffer is drained");
 		}
