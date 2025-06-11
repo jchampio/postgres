@@ -279,6 +279,10 @@ struct async_ctx
 	bool		used_basic_auth;	/* did we send a client secret? */
 	bool		debugging;		/* can we give unsafe developer assistance? */
 	bool		dbg_timer_set;	/* (debug mode) was the timer armed? */
+
+#if defined(HAVE_SYS_EVENT_H)
+	int			nevents;		/* how many events are we waiting on? */
+#endif
 };
 
 /*
@@ -1305,56 +1309,29 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 	struct kevent ev[2] = {0};
 	struct kevent ev_out[2];
 	struct timespec timeout = {0};
-	int			nev = 0;
+	int			nev;
 	int			res;
 
-	switch (what)
-	{
-		case CURL_POLL_IN:
-			/* Any previous write filter needs to be deleted. */
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
+	/*
+	 * First, any existing registrations for this socket need to be removed,
+	 * both to track the outstanding number of events, and to ensure that
+	 * we're not woken up for things that Curl no longer cares about.
+	 *
+	 * ENOENT is okay, but we have to track how many we get, so use
+	 * EV_RECEIPT.
+	 */
+	nev = 0;
+	EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
+	nev++;
+	EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
+	nev++;
 
-		case CURL_POLL_OUT:
-			/* As above, any previous read filter needs to go. */
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		case CURL_POLL_INOUT:
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		case CURL_POLL_REMOVE:
-
-			/*
-			 * We don't know which of these is currently registered, perhaps
-			 * both, so we try to remove both.  This means we need to tolerate
-			 * ENOENT below.
-			 */
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		default:
-			actx_error(actx, "unknown libcurl socket operation: %d", what);
-			return -1;
-	}
+	Assert(nev == lengthof(ev_out)); /* otherwise we'll lose receipts! */
 
 	res = kevent(actx->mux, ev, nev, ev_out, lengthof(ev_out), &timeout);
 	if (res < 0)
 	{
-		actx_error(actx, "could not modify kqueue: %m");
+		actx_error(actx, "could not delete from kqueue: %m");
 		return -1;
 	}
 
@@ -1373,19 +1350,59 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 		Assert(ev_out[i].flags & EV_ERROR);
 
 		errno = ev_out[i].data;
-		if (errno && errno != ENOENT)
+		if (!errno)
 		{
-			switch (what)
-			{
-				case CURL_POLL_REMOVE:
-					actx_error(actx, "could not delete from kqueue: %m");
-					break;
-				default:
-					actx_error(actx, "could not add to kqueue: %m");
-			}
+			/* Successfully removed; update the event count. */
+			Assert(actx->nevents > 0);
+			actx->nevents--;
+		}
+		else if (errno != ENOENT)
+		{
+			actx_error(actx, "could not delete from kqueue: %m");
 			return -1;
 		}
 	}
+
+	/* If we're only removing registrations, we're done. */
+	if (what == CURL_POLL_REMOVE)
+		return 0;
+
+	/* Now add the new filters. This is more straightfoward than deletion. */
+	nev = 0;
+
+	switch (what)
+	{
+		case CURL_POLL_IN:
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		case CURL_POLL_OUT:
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		case CURL_POLL_INOUT:
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD, 0, 0, 0);
+			nev++;
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		default:
+			actx_error(actx, "unknown libcurl socket operation: %d", what);
+			return -1;
+	}
+
+	res = kevent(actx->mux, ev, nev, NULL, 0, NULL);
+	if (res < 0)
+	{
+		actx_error(actx, "could not modify kqueue: %m");
+		return -1;
+	}
+
+	/* Update the event count, and we're done. */
+	actx->nevents += nev;
 
 	if (actx->debugging)
 		fprintf(stderr, "%s fd %d%s\n",
@@ -1487,10 +1504,19 @@ set_timer(struct async_ctx *actx, long timeout)
 	}
 
 	EV_SET(&ev, actx->timerfd, EVFILT_READ, EV_DELETE, 0, 0, 0);
-	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
+	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0)
 	{
-		actx_error(actx, "removing kqueue timer from multiplexer: %m");
-		return false;
+		if (errno != ENOENT)
+		{
+			actx_error(actx, "removing kqueue timer from multiplexer: %m");
+			return false;
+		}
+	}
+	else
+	{
+		/* Successfully removed; update the number of events. */
+		Assert(actx->nevents > 0);
+		actx->nevents--;
 	}
 
 	/* If we're not adding a timer, we're done. */
@@ -1515,6 +1541,8 @@ set_timer(struct async_ctx *actx, long timeout)
 		actx_error(actx, "adding kqueue timer to multiplexer: %m");
 		return false;
 	}
+
+	actx->nevents++;
 
 	if (actx->debugging)
 		fprintf(stderr, "Added timer: %ld ms\n", timeout);
