@@ -1306,10 +1306,10 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 
 	return 0;
 #elif defined(HAVE_SYS_EVENT_H)
-	struct kevent ev[4] = {0};
-	struct kevent ev_out[4];
+	struct kevent ev[2];
+	struct kevent ev_out[2];
 	struct timespec timeout = {0};
-	int			nev = 0;
+	int			nev;
 	int			res;
 
 	/*
@@ -1320,38 +1320,11 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 	 * ENOENT is okay, but we have to track how many we get, so use
 	 * EV_RECEIPT.
 	 */
+	nev = 0;
 	EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
 	nev++;
 	EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
 	nev++;
-
-	/* Add the new events. */
-	switch (what)
-	{
-		case CURL_POLL_IN:
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		case CURL_POLL_OUT:
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		case CURL_POLL_INOUT:
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		case CURL_POLL_REMOVE:
-			break;				/* nothing needs to be added */
-
-		default:
-			actx_error(actx, "unknown libcurl socket operation: %d", what);
-			return -1;
-	}
 
 	Assert(nev <= lengthof(ev));
 	Assert(nev <= lengthof(ev_out));
@@ -1359,13 +1332,13 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 	res = kevent(actx->mux, ev, nev, ev_out, nev, &timeout);
 	if (res < 0)
 	{
-		actx_error(actx, "could not modify kqueue: %m");
+		actx_error(actx, "could not delete from kqueue: %m");
 		return -1;
 	}
 
 	/*
 	 * We can't use the simple errno version of kevent, because we need to
-	 * skip over ENOENT while still allowing other changes to be processed.
+	 * skip over ENOENT while still allowing a second change to be processed.
 	 * So we need a longer-form error checking loop.
 	 */
 	for (int i = 0; i < res; ++i)
@@ -1380,25 +1353,67 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 		errno = ev_out[i].data;
 		if (!errno)
 		{
-			/* Successfully modified; update the event count. */
-			if (ev_out[i].flags & EV_ADD)
-				actx->nevents++;
-			else
-			{
-				Assert(ev_out[i].flags & EV_DELETE);
-				Assert(actx->nevents > 0);
-				actx->nevents--;
-			}
+			/* Successfully removed; update the event count. */
+			Assert(actx->nevents > 0);
+			actx->nevents--;
 		}
 		else if (errno != ENOENT)
 		{
-			if (ev_out[i].flags & EV_DELETE)
-				actx_error(actx, "could not delete from kqueue: %m");
-			else
-				actx_error(actx, "could not add to kqueue: %m");
+			actx_error(actx, "could not delete from kqueue: %m");
 			return -1;
 		}
 	}
+
+	/* If we're only removing registrations, we're done. */
+	if (what == CURL_POLL_REMOVE)
+		return 0;
+
+	/*
+	 * Now add the new filters. This is more straightfoward than deletion.
+	 *
+	 * Combining this kevent() call with the one above seems like it should be
+	 * theoretically possible, but beware that not all BSDs keep the original
+	 * event flags when using EV_RECEIPT, so it's tricky to figure out which
+	 * operations succeeded. For now we keep the deletions and the additions
+	 * separate.
+	 */
+	nev = 0;
+
+	switch (what)
+	{
+		case CURL_POLL_IN:
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		case CURL_POLL_OUT:
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		case CURL_POLL_INOUT:
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD, 0, 0, 0);
+			nev++;
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		default:
+			actx_error(actx, "unknown libcurl socket operation: %d", what);
+			return -1;
+	}
+
+	Assert(nev <= lengthof(ev));
+
+	res = kevent(actx->mux, ev, nev, NULL, 0, NULL);
+	if (res < 0)
+	{
+		actx_error(actx, "could not modify kqueue: %m");
+		return -1;
+	}
+
+	/* Update the event count, and we're done. */
+	actx->nevents += nev;
 
 	if (actx->debugging)
 		fprintf(stderr, "%s fd %d%s\n",
