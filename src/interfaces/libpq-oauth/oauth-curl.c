@@ -1589,7 +1589,7 @@ drain_socket_events(struct async_ctx *actx)
 
 	Assert(actx->nevents <= lengthof(ev_out));
 
-	if (kevent(actx->mux, NULL, 0, ev_out, lengthof(ev_out), &timeout) < 0)
+	if (kevent(actx->mux, NULL, 0, ev_out, actx->nevents, &timeout) < 0)
 	{
 		actx_error(actx, "could not drain kqueue: %m");
 		return false;

@@ -356,6 +356,33 @@ test_register_socket(void)
 		/* Stop listening. */
 		Assert(register_socket(NULL, wfd, CURL_POLL_REMOVE, actx, NULL) == 0);
 		mux_is_not_ready(actx->mux, "when fd is removed");
+
+		{
+			/*
+			 * Make sure an expired timer doesn't interfere with event
+			 * draining.
+			 */
+			Assert(set_timer(actx, 0));
+			Assert(register_socket(NULL, rfd, in_event, actx, NULL) == 0);
+			Assert(write(wfd, "x", 1) == 1);
+
+			is(timer_expired(actx), 1, "timer is expired");
+			mux_is_ready(actx->mux, deadline, "when fd is readable and timer expired");
+
+			/*
+			 * Draining the pipe should unset the multiplexer again, once the
+			 * old event is drained and the timer is reset.
+			 *
+			 * Order matters to avoid false negatives. First drain the socket,
+			 * then unset the timer.
+			 */
+			Assert(drain_pipe(rfd, 1));
+			Assert(drain_socket_events(actx));
+			Assert(set_timer(actx, -1));
+
+			is(timer_expired(actx), 0, "timer is no longer expired");
+			mux_is_not_ready(actx->mux, "when fd is drained and timer reset");
+		}
 	}
 
 	close(rfd);
