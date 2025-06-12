@@ -1490,7 +1490,8 @@ set_timer(struct async_ctx *actx, long timeout)
 	 * macOS.)
 	 *
 	 * If there was no previous timer set, the kevent calls will result in
-	 * ENOENT, which is fine.
+	 * ENOENT, which is fine. (We don't track actx->nevents for this case;
+	 * instead, drain_socket_events() just assumes a timer could be set.)
 	 */
 	EV_SET(&ev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
@@ -1500,19 +1501,10 @@ set_timer(struct async_ctx *actx, long timeout)
 	}
 
 	EV_SET(&ev, actx->timerfd, EVFILT_READ, EV_DELETE, 0, 0, 0);
-	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0)
+	if (kevent(actx->mux, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
 	{
-		if (errno != ENOENT)
-		{
-			actx_error(actx, "removing kqueue timer from multiplexer: %m");
-			return false;
-		}
-	}
-	else
-	{
-		/* Successfully removed; update the number of events. */
-		Assert(actx->nevents > 0);
-		actx->nevents--;
+		actx_error(actx, "removing kqueue timer from multiplexer: %m");
+		return false;
 	}
 
 	/* If we're not adding a timer, we're done. */
@@ -1537,8 +1529,6 @@ set_timer(struct async_ctx *actx, long timeout)
 		actx_error(actx, "adding kqueue timer to multiplexer: %m");
 		return false;
 	}
-
-	actx->nevents++;
 
 	if (actx->debugging)
 		fprintf(stderr, "Added timer: %ld ms\n", timeout);
@@ -1587,9 +1577,9 @@ drain_socket_events(struct async_ctx *actx)
 	struct kevent ev_out[3] = {0};
 	struct timespec timeout = {0};
 
-	Assert(actx->nevents <= lengthof(ev_out));
+	Assert(actx->nevents + 1 <= lengthof(ev_out));
 
-	if (kevent(actx->mux, NULL, 0, ev_out, actx->nevents, &timeout) < 0)
+	if (kevent(actx->mux, NULL, 0, ev_out, actx->nevents + 1, &timeout) < 0)
 	{
 		actx_error(actx, "could not drain kqueue: %m");
 		return false;
