@@ -1574,17 +1574,33 @@ drain_socket_events(struct async_ctx *actx)
 	/* The epoll implementation doesn't need to drain pending events. */
 	return true;
 #elif defined(HAVE_SYS_EVENT_H)
-	struct kevent ev_out[3] = {0};
 	struct timespec timeout = {0};
+	struct kevent *drain;
+	int			drain_len;
 
-	Assert(actx->nevents + 1 <= lengthof(ev_out));
+	/*
+	 * register_socket() keeps actx->nevents updated with the number of
+	 * outstanding event filters. We don't track the registration of the
+	 * timer; we just assume one could be registered here.
+	 */
+	drain_len = actx->nevents + 1;
 
-	if (kevent(actx->mux, NULL, 0, ev_out, actx->nevents + 1, &timeout) < 0)
+	drain = malloc(sizeof(*drain) * drain_len);
+	if (!drain)
 	{
-		actx_error(actx, "could not drain kqueue: %m");
+		actx_error(actx, "out of memory");
 		return false;
 	}
 
+	/* Discard all pending events. */
+	if (kevent(actx->mux, NULL, 0, drain, drain_len, &timeout) < 0)
+	{
+		actx_error(actx, "could not drain kqueue: %m");
+		free(drain);
+		return false;
+	}
+
+	free(drain);
 	return true;
 #else
 #error drain_socket_events is not implemented on this platform
