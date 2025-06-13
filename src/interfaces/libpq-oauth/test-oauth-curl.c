@@ -268,11 +268,18 @@ test_register_socket(void)
 	int			pipefd[2];
 	int			rfd,
 				wfd;
+	bool		bidirectional;
 
 	/* Create a local pipe for communication. */
 	Assert(pipe(pipefd) == 0);
 	rfd = pipefd[0];
 	wfd = pipefd[1];
+
+	/*
+	 * Some platforms (FreeBSD) implement bidirectional pipes, affecting the
+	 * behavior of some of these tests. Store that knowledge for later.
+	 */
+	bidirectional = PQsocketPoll(rfd /* read */ , 0, 1 /* write */ , 0) > 0;
 
 	/*
 	 * This suite runs twice -- once using CURL_POLL_IN/CURL_POLL_OUT for
@@ -284,8 +291,24 @@ test_register_socket(void)
 		const int	in_event = inout ? CURL_POLL_INOUT : CURL_POLL_IN;
 		const int	out_event = inout ? CURL_POLL_INOUT : CURL_POLL_OUT;
 		const pg_usec_time_t deadline = PQgetCurrentTimeUSec() + timeout_us;
+		size_t		bidi_pipe_size;
 
 		printf("# test_register_socket %s\n", inout ? "(INOUT)" : "");
+
+		/*
+		 * At the start of the test, the read side should be blocked and the
+		 * write side should be open. (There's a mistake at the end of this
+		 * loop otherwise.)
+		 */
+		Assert(PQsocketPoll(rfd, 1, 0, 0) == 0);
+		Assert(PQsocketPoll(wfd, 0, 1, 0) > 0);
+
+		/*
+		 * For bidirectional systems, emulate unidirectional behavior here by
+		 * filling up the "read side" of the pipe.
+		 */
+		if (bidirectional)
+			Assert((bidi_pipe_size = fill_pipe(rfd)) > 0);
 
 		/* Listen on the read side. The multiplexer shouldn't be ready yet. */
 		Assert(register_socket(NULL, rfd, in_event, actx, NULL) == 0);
@@ -322,6 +345,10 @@ test_register_socket(void)
 		Assert(drain_socket_events(actx));
 		mux_is_not_ready(actx->mux, "when fd is drained");
 
+		/* Undo any unidirectional emulation. */
+		if (bidirectional)
+			Assert(drain_pipe(wfd, bidi_pipe_size));
+
 		/* Listen on the write side. An empty buffer should be writable. */
 		Assert(register_socket(NULL, rfd, CURL_POLL_REMOVE, actx, NULL) == 0);
 		Assert(register_socket(NULL, wfd, out_event, actx, NULL) == 0);
@@ -357,16 +384,20 @@ test_register_socket(void)
 		Assert(register_socket(NULL, wfd, CURL_POLL_REMOVE, actx, NULL) == 0);
 		mux_is_not_ready(actx->mux, "when fd is removed");
 
+		/* Make sure an expired timer doesn't interfere with event draining. */
 		{
-			/*
-			 * Make sure an expired timer doesn't interfere with event
-			 * draining.
-			 */
+			/* Make the rfd appear unidirectional if necessary. */
+			if (bidirectional)
+				Assert((bidi_pipe_size = fill_pipe(rfd)) > 0);
+
+			/* Set the timer and wait for it to expire. */
 			Assert(set_timer(actx, 0));
+			Assert(PQsocketPoll(actx->timerfd, 1, 0, deadline) > 0);
+			is(timer_expired(actx), 1, "timer is expired");
+
+			/* Register for read events and make the fd readable. */
 			Assert(register_socket(NULL, rfd, in_event, actx, NULL) == 0);
 			Assert(write(wfd, "x", 1) == 1);
-
-			is(timer_expired(actx), 1, "timer is expired");
 			mux_is_ready(actx->mux, deadline, "when fd is readable and timer expired");
 
 			/*
@@ -374,7 +405,9 @@ test_register_socket(void)
 			 * old event is drained and the timer is reset.
 			 *
 			 * Order matters to avoid false negatives. First drain the socket,
-			 * then unset the timer.
+			 * then unset the timer. We're trying to catch the case where the
+			 * pending timer expiration event takes the place of one of the
+			 * socket events we're attempting to drain.
 			 */
 			Assert(drain_pipe(rfd, 1));
 			Assert(drain_socket_events(actx));
@@ -382,6 +415,13 @@ test_register_socket(void)
 
 			is(timer_expired(actx), 0, "timer is no longer expired");
 			mux_is_not_ready(actx->mux, "when fd is drained and timer reset");
+
+			/* Stop listening. */
+			Assert(register_socket(NULL, rfd, CURL_POLL_REMOVE, actx, NULL) == 0);
+
+			/* Undo any unidirectional emulation. */
+			if (bidirectional)
+				Assert(drain_pipe(wfd, bidi_pipe_size));
 		}
 	}
 
