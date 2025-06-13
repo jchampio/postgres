@@ -439,8 +439,12 @@ like(
 my $count_pattern = qr/\[libpq\] total number of polls: (\d+)/;
 if (like($stderr, $count_pattern, "call count: count is printed"))
 {
+	# For reference, a typical flow with two retries might take between 5-15
+	# calls to the client implementation. And while this will probably continue
+	# to change across OSes and Curl updates, we're likely in trouble if we see
+	# hundreds or thousands of calls.
 	$stderr =~ $count_pattern;
-	cmp_ok($1, '==', 0, "call count is reasonably small");
+	cmp_ok($1, '<', 100, "call count is reasonably small");
 }
 
 # Stress test: make sure our builtin flow operates correctly even if the client
