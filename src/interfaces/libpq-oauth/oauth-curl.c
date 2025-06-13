@@ -278,7 +278,6 @@ struct async_ctx
 	bool		user_prompted;	/* have we already sent the authz prompt? */
 	bool		used_basic_auth;	/* did we send a client secret? */
 	bool		debugging;		/* can we give unsafe developer assistance? */
-	bool		dbg_timer_set;	/* (debug mode) was the timer armed? */
 	int			dbg_num_calls;	/* (debug mode) how many times were we called? */
 
 #if defined(HAVE_SYS_EVENT_H)
@@ -1442,16 +1441,13 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
  *
  * To meet Curl requirements for the CURLMOPT_TIMERFUNCTION, implementations of
  * set_timer must handle repeated calls by fully discarding any previous running
- * or expired timer. actx->dbg_timer_set must be updated here as well, to let
- * pg_fe_run_oauth_flow() guard against stuck timer events.
+ * or expired timer.
  */
 static bool
 set_timer(struct async_ctx *actx, long timeout)
 {
 #if defined(HAVE_SYS_EPOLL_H)
 	struct itimerspec spec = {0};
-
-	actx->dbg_timer_set = (timeout >= 0);
 
 	if (timeout < 0)
 	{
@@ -1486,8 +1482,6 @@ set_timer(struct async_ctx *actx, long timeout)
 	return true;
 #elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev;
-
-	actx->dbg_timer_set = (timeout >= 0);
 
 #ifdef __NetBSD__
 
@@ -2895,29 +2889,24 @@ pg_fe_run_oauth_flow_impl(PGconn *conn)
 				}
 
 			case OAUTH_STEP_WAIT_INTERVAL:
+
+				/*
+				 * The client application is supposed to wait until our timer
+				 * expires before calling PQconnectPoll() again, but that
+				 * might not happen. To avoid sending a token request early,
+				 * check the timer before continuing.
+				 */
+				if (!timer_expired(actx))
 				{
-					/*
-					 * The client application is supposed to wait until our
-					 * timer expires before calling PQconnectPoll() again, but
-					 * that might not happen. To avoid sending a token request
-					 * early, check the timer before continuing.
-					 */
-					int			expired = timer_expired(actx);
-
-					if (expired < 0)
-						goto error_return;
-					else if (!expired)
-					{
-						set_conn_altsock(conn, actx->timerfd);
-						return PGRES_POLLING_READING;
-					}
-
-					/* Disable the expired timer. */
-					if (!set_timer(actx, -1))
-						goto error_return;
-
-					break;
+					set_conn_altsock(conn, actx->timerfd);
+					return PGRES_POLLING_READING;
 				}
+
+				/* Disable the expired timer. */
+				if (!set_timer(actx, -1))
+					goto error_return;
+
+				break;
 		}
 
 		/*
@@ -3095,24 +3084,10 @@ pg_fe_run_oauth_flow(PGconn *conn)
 	masked = (pq_block_sigpipe(&osigset, &sigpipe_pending) == 0);
 #endif
 
-	if (actx && actx->debugging)
-	{
-		if (timer_expired(actx))
-			actx->dbg_timer_set = false;
-	}
-
 	result = pg_fe_run_oauth_flow_impl(conn);
 
 	if (actx && actx->debugging)
 	{
-		if (timer_expired(actx)
-			&& !actx->dbg_timer_set
-			&& result != PGRES_POLLING_FAILED)
-		{
-			fprintf(stderr, "warning: OAuth timer is stuck read-ready\n");
-			Assert(false);
-		}
-
 		actx->dbg_num_calls++;
 		if (result == PGRES_POLLING_OK || result == PGRES_POLLING_FAILED)
 			fprintf(stderr, "[libpq] total number of polls: %d\n",
