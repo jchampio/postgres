@@ -279,6 +279,7 @@ struct async_ctx
 	bool		used_basic_auth;	/* did we send a client secret? */
 	bool		debugging;		/* can we give unsafe developer assistance? */
 	bool		dbg_timer_set;	/* (debug mode) was the timer armed? */
+	int			dbg_num_calls;	/* (debug mode) how many times were we called? */
 
 #if defined(HAVE_SYS_EVENT_H)
 	int			nevents;		/* how many events are we waiting on? */
@@ -3111,6 +3112,11 @@ pg_fe_run_oauth_flow(PGconn *conn)
 			fprintf(stderr, "warning: OAuth timer is stuck read-ready\n");
 			Assert(false);
 		}
+
+		actx->dbg_num_calls++;
+		if (result == PGRES_POLLING_OK || result == PGRES_POLLING_FAILED)
+			fprintf(stderr, "[libpq] total number of polls: %d\n",
+					actx->dbg_num_calls);
 	}
 
 #ifndef WIN32
