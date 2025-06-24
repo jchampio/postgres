@@ -943,10 +943,10 @@ if not libcurlopt.disabled()
   # libcurl and one of either epoll or kqueue.
   oauth_flow_supported = (
     libcurl.found()
-    and (cc.check_header('sys/event.h', required: false,
-                         args: test_c_args, include_directories: postgres_inc)
-         or cc.check_header('sys/epoll.h', required: false,
-                            args: test_c_args, include_directories: postgres_inc))
+    and (cc.has_header('sys/event.h',
+                       args: test_c_args, include_directories: postgres_inc)
+         or cc.has_header('sys/epoll.h',
+                          args: test_c_args, include_directories: postgres_inc))
   )
 
   if oauth_flow_supported
@@ -1205,7 +1205,7 @@ if not perlopt.disabled()
       if cc.get_id() == 'msvc'
         # prevent binary mismatch between MSVC built plperl and Strawberry or
         # msys ucrt perl libraries
-        perl_v = run_command(perl, '-V').stdout()
+        perl_v = run_command(perl, '-V', check: false).stdout()
         if not perl_v.contains('USE_THREAD_SAFE_LOCALE')
           perl_ccflags += ['-DNO_THREAD_SAFE_LOCALE']
         endif
@@ -2465,6 +2465,7 @@ int main(void)
 {
      __m128i z;
 
+    x = _mm512_xor_si512(_mm512_zextsi128_si512(_mm_cvtsi32_si128(0)), x);
     y = _mm512_clmulepi64_epi128(x, y, 0);
     z = _mm_ternarylogic_epi64(
             _mm512_castsi512_si128(y),
