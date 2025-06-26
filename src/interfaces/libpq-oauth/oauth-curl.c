@@ -278,6 +278,11 @@ struct async_ctx
 	bool		user_prompted;	/* have we already sent the authz prompt? */
 	bool		used_basic_auth;	/* did we send a client secret? */
 	bool		debugging;		/* can we give unsafe developer assistance? */
+	int			dbg_num_calls;	/* (debug mode) how many times were we called? */
+
+#if defined(HAVE_SYS_EVENT_H)
+	int			nevents;		/* how many events are we waiting on? */
+#endif
 };
 
 /*
@@ -1289,55 +1294,45 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 		return -1;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s fd %d%s\n",
+				(op == EPOLL_CTL_DEL ? "Removed"
+				 : (op == EPOLL_CTL_ADD ? "Added" : "Updated")),
+				socket,
+				(what == CURL_POLL_REMOVE ? ""
+				 : (what == CURL_POLL_IN ? " (read)"
+					: (what == CURL_POLL_OUT ? " (write)"
+					   : " (read/write)"))));
+
 	return 0;
 #elif defined(HAVE_SYS_EVENT_H)
-	struct kevent ev[2] = {0};
+	struct kevent ev[2];
 	struct kevent ev_out[2];
 	struct timespec timeout = {0};
-	int			nev = 0;
+	int			nev;
 	int			res;
 
-	switch (what)
-	{
-		case CURL_POLL_IN:
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
+	/*
+	 * First, any existing registrations for this socket need to be removed,
+	 * both to track the outstanding number of events, and to ensure that
+	 * we're not woken up for things that Curl no longer cares about.
+	 *
+	 * ENOENT is okay, but we have to track how many we get, so use
+	 * EV_RECEIPT.
+	 */
+	nev = 0;
+	EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
+	nev++;
+	EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
+	nev++;
 
-		case CURL_POLL_OUT:
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
+	Assert(nev <= lengthof(ev));
+	Assert(nev <= lengthof(ev_out));
 
-		case CURL_POLL_INOUT:
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		case CURL_POLL_REMOVE:
-
-			/*
-			 * We don't know which of these is currently registered, perhaps
-			 * both, so we try to remove both.  This means we need to tolerate
-			 * ENOENT below.
-			 */
-			EV_SET(&ev[nev], socket, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, 0);
-			nev++;
-			break;
-
-		default:
-			actx_error(actx, "unknown libcurl socket operation: %d", what);
-			return -1;
-	}
-
-	res = kevent(actx->mux, ev, nev, ev_out, lengthof(ev_out), &timeout);
+	res = kevent(actx->mux, ev, nev, ev_out, nev, &timeout);
 	if (res < 0)
 	{
-		actx_error(actx, "could not modify kqueue: %m");
+		actx_error(actx, "could not delete from kqueue: %m");
 		return -1;
 	}
 
@@ -1356,23 +1351,152 @@ register_socket(CURL *curl, curl_socket_t socket, int what, void *ctx,
 		Assert(ev_out[i].flags & EV_ERROR);
 
 		errno = ev_out[i].data;
-		if (errno && errno != ENOENT)
+		if (!errno)
 		{
-			switch (what)
-			{
-				case CURL_POLL_REMOVE:
-					actx_error(actx, "could not delete from kqueue: %m");
-					break;
-				default:
-					actx_error(actx, "could not add to kqueue: %m");
-			}
+			/* Successfully removed; update the event count. */
+			Assert(actx->nevents > 0);
+			actx->nevents--;
+		}
+		else if (errno != ENOENT)
+		{
+			actx_error(actx, "could not delete from kqueue: %m");
 			return -1;
 		}
 	}
 
+	/* If we're only removing registrations, we're done. */
+	if (what == CURL_POLL_REMOVE)
+		return 0;
+
+	/*
+	 * Now add the new filters. This is more straightfoward than deletion.
+	 *
+	 * Combining this kevent() call with the one above seems like it should be
+	 * theoretically possible, but beware that not all BSDs keep the original
+	 * event flags when using EV_RECEIPT, so it's tricky to figure out which
+	 * operations succeeded. For now we keep the deletions and the additions
+	 * separate.
+	 */
+	nev = 0;
+
+	switch (what)
+	{
+		case CURL_POLL_IN:
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		case CURL_POLL_OUT:
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		case CURL_POLL_INOUT:
+			EV_SET(&ev[nev], socket, EVFILT_READ, EV_ADD, 0, 0, 0);
+			nev++;
+			EV_SET(&ev[nev], socket, EVFILT_WRITE, EV_ADD, 0, 0, 0);
+			nev++;
+			break;
+
+		default:
+			actx_error(actx, "unknown libcurl socket operation: %d", what);
+			return -1;
+	}
+
+	Assert(nev <= lengthof(ev));
+
+	res = kevent(actx->mux, ev, nev, NULL, 0, NULL);
+	if (res < 0)
+	{
+		actx_error(actx, "could not modify kqueue: %m");
+		return -1;
+	}
+
+	/* Update the event count, and we're done. */
+	actx->nevents += nev;
+
+	if (actx->debugging)
+		fprintf(stderr, "%s fd %d%s\n",
+				(what == CURL_POLL_REMOVE ? "Removed" : "Updated"),
+				socket,
+				(what == CURL_POLL_REMOVE ? ""
+				 : (what == CURL_POLL_IN ? " (read)"
+					: (what == CURL_POLL_OUT ? " (write)"
+					   : " (read/write)"))));
+
 	return 0;
 #else
 #error register_socket is not implemented on this platform
+#endif
+}
+
+/*-------
+ * Drains any stale level-triggered events out of the multiplexer. This is
+ * necessary only if the mux implementation requires it.
+ *
+ * As an example, consider the following sequence of events:
+ * 1. libcurl tries to write data to the send buffer, but it fills up.
+ * 2. libcurl registers CURL_POLL_OUT on the socket and returns control to the
+ *    client to wait.
+ * 3. The kernel partially drains the send buffer. The socket becomes writable,
+ *    and the client wakes up and calls back into the flow.
+ * 4. libcurl continues writing data to the send buffer, but it fills up again.
+ *    The socket is no longer writable.
+ *
+ * At this point, an epoll-based mux no longer signals readiness, so nothing
+ * further needs to be done. But a kqueue-based mux will continue to signal
+ * "ready" until either the EVFILT_WRITE registration is dropped for the socket,
+ * or the old socket-writable event is read from the queue. Since Curl isn't
+ * guaranteed to do the former, we must do the latter here.
+ */
+static bool
+drain_socket_events(struct async_ctx *actx)
+{
+#if defined(HAVE_SYS_EPOLL_H)
+	/* The epoll implementation doesn't need to drain pending events. */
+	return true;
+#elif defined(HAVE_SYS_EVENT_H)
+	struct timespec timeout = {0};
+	struct kevent *drain;
+	int			drain_len;
+
+	/*
+	 * Drain the events in one call, rather than looping. (We could maybe call
+	 * kevent() drain_len times, instead of allocating space for the maximum
+	 * number of events, but that relies on the events being in FIFO order to
+	 * avoid starvation. The kqueue man pages don't seem to make any
+	 * guarantees about that.)
+	 *
+	 * register_socket() keeps actx->nevents updated with the number of
+	 * outstanding event filters. We don't track the registration of the
+	 * timer; we just assume one could be registered here.
+	 */
+	drain_len = actx->nevents + 1;
+
+	drain = malloc(sizeof(*drain) * drain_len);
+	if (!drain)
+	{
+		actx_error(actx, "out of memory");
+		return false;
+	}
+
+	/*
+	 * Discard all pending events. Since our registrations are level-triggered
+	 * (even the timer, since we use a chained kqueue for that instead of an
+	 * EVFILT_TIMER on the top-level mux!), any events that we still need will
+	 * remain signalled, and the stale ones will be swept away.
+	 */
+	if (kevent(actx->mux, NULL, 0, drain, drain_len, &timeout) < 0)
+	{
+		actx_error(actx, "could not drain kqueue: %m");
+		free(drain);
+		return false;
+	}
+
+	free(drain);
+	return true;
+#else
+#error drain_socket_events is not implemented on this platform
 #endif
 }
 
@@ -1420,6 +1544,11 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "%s timer: %ld ms\n",
+				(timeout < 0 ? "Removed" : "Set"),
+				timeout);
+
 	return true;
 #elif defined(HAVE_SYS_EVENT_H)
 	struct kevent ev;
@@ -1441,7 +1570,8 @@ set_timer(struct async_ctx *actx, long timeout)
 	 * macOS.)
 	 *
 	 * If there was no previous timer set, the kevent calls will result in
-	 * ENOENT, which is fine.
+	 * ENOENT, which is fine. (We don't track actx->nevents for this case;
+	 * instead, drain_socket_events() just assumes a timer could be set.)
 	 */
 	EV_SET(&ev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0 && errno != ENOENT)
@@ -1459,7 +1589,12 @@ set_timer(struct async_ctx *actx, long timeout)
 
 	/* If we're not adding a timer, we're done. */
 	if (timeout < 0)
+	{
+		if (actx->debugging)
+			fprintf(stderr, "Removed timer: %ld ms\n", timeout);
+
 		return true;
+	}
 
 	EV_SET(&ev, 1, EVFILT_TIMER, (EV_ADD | EV_ONESHOT), 0, timeout, 0);
 	if (kevent(actx->timerfd, &ev, 1, NULL, 0, NULL) < 0)
@@ -1475,6 +1610,9 @@ set_timer(struct async_ctx *actx, long timeout)
 		return false;
 	}
 
+	if (actx->debugging)
+		fprintf(stderr, "Added timer: %ld ms\n", timeout);
+
 	return true;
 #else
 #error set_timer is not implemented on this platform
@@ -1483,42 +1621,25 @@ set_timer(struct async_ctx *actx, long timeout)
 
 /*
  * Returns 1 if the timeout in the multiplexer set has expired since the last
- * call to set_timer(), 0 if the timer is still running, or -1 (with an
- * actx_error() report) if the timer cannot be queried.
+ * call to set_timer(), 0 if the timer is either still running or disarmed, or
+ * -1 (with an actx_error() report) if the timer cannot be queried.
  */
 static int
 timer_expired(struct async_ctx *actx)
 {
-#if defined(HAVE_SYS_EPOLL_H)
-	struct itimerspec spec = {0};
-
-	if (timerfd_gettime(actx->timerfd, &spec) < 0)
-	{
-		actx_error(actx, "getting timerfd value: %m");
-		return -1;
-	}
-
-	/*
-	 * This implementation assumes we're using single-shot timers. If you
-	 * change to using intervals, you'll need to reimplement this function
-	 * too, possibly with the read() or select() interfaces for timerfd.
-	 */
-	Assert(spec.it_interval.tv_sec == 0
-		   && spec.it_interval.tv_nsec == 0);
-
-	/* If the remaining time to expiration is zero, we're done. */
-	return (spec.it_value.tv_sec == 0
-			&& spec.it_value.tv_nsec == 0);
-#elif defined(HAVE_SYS_EVENT_H)
+#if defined(HAVE_SYS_EPOLL_H) || defined(HAVE_SYS_EVENT_H)
 	int			res;
 
-	/* Is the timer queue ready? */
+	/* Is the timer ready? */
 	res = PQsocketPoll(actx->timerfd, 1 /* forRead */ , 0, 0);
 	if (res < 0)
 	{
-		actx_error(actx, "checking kqueue for timeout: %m");
+		actx_error(actx, "checking timer expiration: %m");
 		return -1;
 	}
+
+	if (actx->debugging)
+		fprintf(stderr, "timer has %sexpired\n", (res > 0 ? "" : "not "));
 
 	return (res > 0);
 #else
@@ -1546,6 +1667,36 @@ register_timer(CURLM *curlm, long timeout, void *ctx)
 		return -1;				/* actx_error already called */
 
 	return 0;
+}
+
+/*
+ * Removes any expired-timer event from the multiplexer. If was_expired is not
+ * NULL, it will contain whether or not the timer was expired at time of call.
+ */
+static bool
+drain_timer_events(struct async_ctx *actx, bool *was_expired)
+{
+	int			res;
+
+	res = timer_expired(actx);
+	if (res < 0)
+		return false;
+
+	if (res > 0)
+	{
+		/*
+		 * Timer is expired. We could drain the event manually from the
+		 * timerfd, but it's easier to simply disable it; that keeps the
+		 * platform-specific code in set_timer().
+		 */
+		if (!set_timer(actx, -1))
+			return false;
+	}
+
+	if (was_expired)
+		*was_expired = (res > 0);
+
+	return true;
 }
 
 /*
@@ -1866,6 +2017,9 @@ drive_request(struct async_ctx *actx)
 	CURLMsg    *msg;
 	int			msgs_left;
 	bool		done;
+
+	if (actx->debugging)
+		fprintf(stderr, "In drive_request\n");
 
 	if (actx->running)
 	{
@@ -2751,38 +2905,65 @@ pg_fe_run_oauth_flow_impl(PGconn *conn)
 				{
 					PostgresPollingStatusType status;
 
+					/*
+					 * Clear any expired timeout before calling back into
+					 * Curl. Curl is not guaranteed to do this for us, because
+					 * its API expects us to use single-shot (i.e.
+					 * edge-triggered) timeouts, and ours are level-triggered
+					 * via the mux.
+					 *
+					 * This can't be combined with the drain_socket_events()
+					 * call below: we might accidentally clear a short timeout
+					 * that was both set and expired during the call to
+					 * drive_request().
+					 */
+					if (!drain_timer_events(actx, NULL))
+						goto error_return;
+
+					/* Move the request forward. */
 					status = drive_request(actx);
 
 					if (status == PGRES_POLLING_FAILED)
 						goto error_return;
-					else if (status != PGRES_POLLING_OK)
+					else if (status == PGRES_POLLING_OK)
+						break;	/* done! */
+
+					/*
+					 * This request is still running.
+					 *
+					 * Drain any stale socket events from the mux before we
+					 * ask the client to poll. (Currently, this can occur only
+					 * with kqueue.) If this is forgotten, the multiplexer can
+					 * get stuck in a signalled state and we'll burn CPU
+					 * cycles pointlessly.
+					 */
+					if (!drain_socket_events(actx))
+						goto error_return;
+
+					return status;
+				}
+
+			case OAUTH_STEP_WAIT_INTERVAL:
+				{
+					bool		expired;
+
+					/*
+					 * The client application is supposed to wait until our
+					 * timer expires before calling PQconnectPoll() again, but
+					 * that might not happen. To avoid sending a token request
+					 * early, check the timer before continuing.
+					 */
+					if (!drain_timer_events(actx, &expired))
+						goto error_return;
+
+					if (!expired)
 					{
-						/* not done yet */
-						return status;
+						set_conn_altsock(conn, actx->timerfd);
+						return PGRES_POLLING_READING;
 					}
 
 					break;
 				}
-
-			case OAUTH_STEP_WAIT_INTERVAL:
-
-				/*
-				 * The client application is supposed to wait until our timer
-				 * expires before calling PQconnectPoll() again, but that
-				 * might not happen. To avoid sending a token request early,
-				 * check the timer before continuing.
-				 */
-				if (!timer_expired(actx))
-				{
-					set_conn_altsock(conn, actx->timerfd);
-					return PGRES_POLLING_READING;
-				}
-
-				/* Disable the expired timer. */
-				if (!set_timer(actx, -1))
-					goto error_return;
-
-				break;
 		}
 
 		/*
@@ -2932,6 +3113,8 @@ PostgresPollingStatusType
 pg_fe_run_oauth_flow(PGconn *conn)
 {
 	PostgresPollingStatusType result;
+	fe_oauth_state *state = conn_sasl_state(conn);
+	struct async_ctx *actx;
 #ifndef WIN32
 	sigset_t	osigset;
 	bool		sigpipe_pending;
@@ -2959,6 +3142,25 @@ pg_fe_run_oauth_flow(PGconn *conn)
 #endif
 
 	result = pg_fe_run_oauth_flow_impl(conn);
+
+	/*
+	 * To assist with finding bugs in drain_socket_events() and
+	 * drain_timer_events(), when we're in debug mode, track the total number
+	 * of calls to this function and print that at the end of the flow.
+	 *
+	 * Be careful that state->async_ctx could be NULL if early initialization
+	 * fails during the first call.
+	 */
+	actx = state->async_ctx;
+	Assert(actx || result == PGRES_POLLING_FAILED);
+
+	if (actx && actx->debugging)
+	{
+		actx->dbg_num_calls++;
+		if (result == PGRES_POLLING_OK || result == PGRES_POLLING_FAILED)
+			fprintf(stderr, "[libpq] total number of polls: %d\n",
+					actx->dbg_num_calls);
+	}
 
 #ifndef WIN32
 	if (masked)
