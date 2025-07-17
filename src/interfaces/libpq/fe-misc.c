@@ -55,6 +55,7 @@ static int	pqPutMsgBytes(const void *buf, size_t len, PGconn *conn);
 static int	pqSendSome(PGconn *conn, int len);
 static int	pqSocketCheck(PGconn *conn, int forRead, int forWrite,
 						  pg_usec_time_t end_time);
+static int	pqReadData_internal(PGconn *conn);
 
 /*
  * PQlibVersion: return the libpq version number
@@ -593,6 +594,13 @@ pqPutMsgEnd(PGconn *conn)
 
 /* ----------
  * pqReadData: read more data, if any is available
+ *
+ * Upon a successful return, callers may assume that either 1) all available
+ * bytes have been consumed from the socket, or 2) the socket is still marked
+ * readable by the OS. (In other words: after a successful pqReadData, it's safe
+ * to tell a client to poll for readable bytes on the socket without any further
+ * draining of the SSL/GSS transport buffers.)
+ *
  * Possible return values:
  *	 1: successfully loaded at least one more byte
  *	 0: no data is presently available, but no error detected
@@ -605,14 +613,53 @@ pqPutMsgEnd(PGconn *conn)
 int
 pqReadData(PGconn *conn)
 {
-	int			someread = 0;
-	int			nread;
+	int			available;
+	bool		pending;
 
 	if (conn->sock == PGINVALID_SOCKET)
 	{
 		libpq_append_conn_error(conn, "connection not open");
 		return -1;
 	}
+
+	available = pqReadData_internal(conn);
+	if (available < 0)
+		return -1;
+
+	/*
+	 * Make sure there are no bytes stuck in layers between conn->inBuffer and
+	 * the socket, to make it safe for clients to poll on PQsocket(). See
+	 * pqsecure_drain_pending's documentation for details.
+	 */
+	pending = pqsecure_read_is_pending(conn);
+
+	if (available && pending)
+	{
+		if (pqsecure_drain_pending(conn))
+			return -1;
+	}
+	else if (!available)
+	{
+		/*
+		 * If we're not returning any bytes from the underlying transport,
+		 * that must imply there aren't any in the transport buffer...
+		 */
+		Assert(!pending);
+	}
+
+	return available;
+}
+
+/*
+ * Workhorse for pqReadData(). It's kept separate from the
+ * pqsecure_drain_pending() logic to avoid adding to this function's goto
+ * complexity.
+ */
+static int
+pqReadData_internal(PGconn *conn)
+{
+	int			someread = 0;
+	int			nread;
 
 	/* Left-justify any data in the buffer to make room */
 	if (conn->inStart < conn->inEnd)

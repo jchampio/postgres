@@ -236,6 +236,115 @@ pgtls_read_is_pending(PGconn *conn)
 	return SSL_pending(conn->ssl) > 0;
 }
 
+/*
+ * Helper callback for use with ERR_print_errors_cb(). This appends the raw
+ * error queue to the provided PQExpBuffer, one entry per line.
+ *
+ * Note that this is not pretty output; it's meant for debugging.
+ */
+static int
+append_error_queue(const char *str, size_t len, void *u)
+{
+	PQExpBuffer buf = u;
+
+	appendBinaryPQExpBuffer(buf, str, len);
+	appendPQExpBufferChar(buf, '\n');
+
+	return 0;
+}
+
+int
+pgtls_drain_pending(PGconn *conn)
+{
+	int			pending;
+	size_t		drained;
+
+	/*
+	 * OpenSSL readahead is documented to break SSL_pending(). Plus, we can't
+	 * afford to have OpenSSL take bytes off the socket without processing
+	 * them; that breaks the postconditions for pqsecure_drain_pending().
+	 */
+	Assert(!SSL_get_read_ahead(conn->ssl));
+
+	/* Figure out how many bytes to take off the connection. */
+	pending = SSL_pending(conn->ssl);
+
+	if (!pending)
+	{
+		/* Nothing to do. */
+		return 0;
+	}
+	else if (pending < 0)
+	{
+		/* Shouldn't be possible, but don't let it mess up the math below. */
+		Assert(false);
+		libpq_append_conn_error(conn, "OpenSSL reports negative bytes pending");
+		return -1;
+	}
+	else if (pending == INT_MAX)
+	{
+		/*
+		 * If we ever found a legitimate way to hit this, we'd need to loop
+		 * around to call SSL_pending() again. Throw an error rather than
+		 * complicate the code in that way, because SSL_read() should be
+		 * bounded to the size of a single TLS record, and conn->inBuffer
+		 * can't currently go past INT_MAX in size anyway.
+		 */
+		libpq_append_conn_error(conn, "OpenSSL reports INT_MAX bytes pending");
+		return -1;
+	}
+
+	/* Expand the input buffer if necessary. */
+	if (pqCheckInBufferSpace(conn->inEnd + (size_t) pending, conn))
+		return -1;				/* errorMessage already set */
+
+	/*
+	 * Now read the buffered data.
+	 *
+	 * Don't defer to pgtls_read(); OpenSSL should guarantee that pending data
+	 * comes off in a single call, and we don't want to use the more
+	 * complicated read-loop behavior. We still have to manage the error
+	 * queue.
+	 */
+	ERR_clear_error();
+	if (!SSL_read_ex(conn->ssl, conn->inBuffer + conn->inEnd, pending, &drained))
+	{
+		int			err = SSL_get_error(conn->ssl, 0);
+
+		/*
+		 * Something is very wrong. Report the error code and the entirety of
+		 * the error queue without any attempt at interpretation. Probably not
+		 * worth complicating things for the sake of translation, either.
+		 */
+		appendPQExpBuffer(&conn->errorMessage,
+						  "unexpected error code %d while draining SSL buffer; ",
+						  err);
+
+		if (ERR_peek_error())
+		{
+			appendPQExpBufferStr(&conn->errorMessage, "error queue follows:\n");
+			ERR_print_errors_cb(append_error_queue, &conn->errorMessage);
+		}
+		else
+			appendPQExpBufferStr(&conn->errorMessage,
+								 "no error queue provided\n");
+
+		return -1;
+	}
+
+	/* Final consistency check. */
+	if (drained != pending)
+	{
+		libpq_append_conn_error(conn,
+								"drained only %zu of %d pending bytes in SSL buffer",
+								drained, pending);
+		return -1;
+	}
+
+	conn->inEnd += pending;
+	return 0;
+}
+
 ssize_t
 pgtls_write(PGconn *conn, const void *ptr, size_t len)
 {

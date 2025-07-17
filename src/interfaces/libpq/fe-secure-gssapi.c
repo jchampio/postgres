@@ -475,6 +475,33 @@ pg_GSS_read_is_pending(PGconn *conn)
 	return PqGSSResultLength > PqGSSResultNext;
 }
 
+int
+pg_GSS_drain_pending(PGconn *conn)
+{
+	int			pending;
+
+	/* Figure out how many bytes to take off the connection. */
+	Assert(PqGSSResultLength >= PqGSSResultNext);
+	pending = PqGSSResultLength - PqGSSResultNext;
+
+	if (!pending)
+	{
+		/* Nothing to do. */
+		return 0;
+	}
+
+	/* Expand the input buffer if necessary. */
+	if (pqCheckInBufferSpace(conn->inEnd + (size_t) pending, conn))
+		return -1;				/* errorMessage already set */
+
+	/* Now read the buffered data. */
+	memcpy(conn->inBuffer + conn->inEnd, PqGSSResultBuffer + PqGSSResultNext, pending);
+	conn->inEnd += pending;
+	PqGSSResultNext += pending;
+
+	return 0;
+}
+
 /*
  * Negotiate GSSAPI transport for a connection.  When complete, returns
  * PGRES_POLLING_OK.  Will return PGRES_POLLING_READING or

@@ -244,7 +244,9 @@ pqsecure_raw_read(PGconn *conn, void *ptr, size_t len)
 }
 
 /*
- * Returns true if there are any bytes available in the transport buffer.
+ * Returns true if there are any bytes available in the transport buffer. See
+ * pqsecure_drain_pending() for a more complete discussion of the concepts
+ * involved.
  */
 bool
 pqsecure_read_is_pending(PGconn *conn)
@@ -260,6 +262,53 @@ pqsecure_read_is_pending(PGconn *conn)
 
 	/* Plaintext connections have no transport buffer. */
 	return 0;
+}
+
+/*
+ * Drains any transport data that is already buffered in userspace and adds it
+ * to conn->inBuffer, enlarging inBuffer if necessary. The drain fails if
+ * inBuffer cannot be made to hold all available transport data.
+ *
+ * This operation is necessary to prevent deadlock, due to a layering violation
+ * designed into our asynchronous client API: pqReadData() and all the parsing
+ * routines above it receive data from the SSL/GSS transport buffer, but clients
+ * poll on the raw PQsocket() handle.
+ *
+ * If the
+ *
+ * Implementations should not attempt to read any more data from the socket
+ * while draining the transport buffer. After a successful return,
+ * pqsecure_bytes_pending() must be zero.
+ */
+int
+pqsecure_drain_pending(PGconn *conn)
+{
+	int			ret;
+
+#ifdef USE_SSL
+	if (conn->ssl_in_use)
+	{
+		ret = pgtls_drain_pending(conn);
+	}
+	else
+#endif
+#ifdef ENABLE_GSS
+	if (conn->gssenc)
+	{
+		ret = pg_GSS_drain_pending(conn);
+	}
+	else
+#endif
+	{
+		/* Plaintext connections have no transport buffer. */
+		ret = 0;
+	}
+
+	/* Keep the implementation honest. */
+	if (ret == 0)
+		Assert(!pqsecure_read_is_pending(conn));
+
+	return ret;
 }
 
 /*
