@@ -1719,6 +1719,28 @@ endif
 
 
 ###############################################################
+# Library: pytest
+###############################################################
+
+pytest_enabled = false
+pytestopt = get_option('pytest')
+if not pytestopt.disabled()
+  pytest_check = run_command(python, 'config/check_pytest.py', check: false)
+  if pytest_check.returncode() != 0
+    message(pytest_check.stderr().strip())
+    if pytestopt.enabled()
+      error('Additional Python packages are required to run the pytest suites.')
+    else
+      warning('Additional Python packages are required to run the pytest suites.')
+    endif
+  else
+    pytest_enabled = true
+  endif
+endif
+
+
+
+###############################################################
 # Library: zstd
 ###############################################################
 
