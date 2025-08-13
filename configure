@@ -19358,7 +19358,7 @@ fi
   fi
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking for Python packages required for pytest" >&5
 $as_echo_n "checking for Python packages required for pytest... " >&6; }
-  modulestderr=`"$PYTHON" "$srcdir/config/check_pytest.py" 2>&1 >/dev/null`
+  modulestderr=`"$PYTHON" "$srcdir/config/check_pytest.py" "$srcdir/config/pytest-requirements.txt" 2>&1 >/dev/null`
   if test $? -eq 0; then
     echo "$modulestderr" >&5
     { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
