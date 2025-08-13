@@ -1725,7 +1725,8 @@ endif
 pytest_enabled = false
 pytestopt = get_option('pytest')
 if not pytestopt.disabled()
-  pytest_check = run_command(python, 'config/check_pytest.py', check: false)
+  pytest_check = run_command(python, 'config/check_pytest.py',
+                             'config/pytest-requirements.txt', check: false)
   if pytest_check.returncode() != 0
     message(pytest_check.stderr().strip())
     if pytestopt.enabled()

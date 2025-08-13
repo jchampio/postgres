@@ -2435,7 +2435,7 @@ if test "$enable_pytest" = yes; then
     PGAC_PATH_PYTHON
   fi
   AC_MSG_CHECKING(for Python packages required for pytest)
-  [modulestderr=`"$PYTHON" "$srcdir/config/check_pytest.py" 2>&1 >/dev/null`]
+  [modulestderr=`"$PYTHON" "$srcdir/config/check_pytest.py" "$srcdir/config/pytest-requirements.txt" 2>&1 >/dev/null`]
   if test $? -eq 0; then
     echo "$modulestderr" >&AS_MESSAGE_LOG_FD
     AC_MSG_RESULT(yes)
