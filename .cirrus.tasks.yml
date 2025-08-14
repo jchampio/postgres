@@ -188,7 +188,9 @@ task:
     chown root:postgres /tmp/cores
     sysctl kern.corefile='/tmp/cores/%N.%P.core'
   setup_additional_packages_script: |
-    #pkg install -y ...
+    pkg install -y \
+      py311-packaging \
+      py311-pytest
 
   # NB: Intentionally build without -Dllvm. The freebsd image size is already
   # large enough to make VM startup slow, and even without llvm freebsd
@@ -197,7 +199,7 @@ task:
     su postgres <<-EOF
       meson setup \
         --buildtype=debug \
-        -Dcassert=true -Dinjection_points=true \
+        -Dcassert=true -Dinjection_points=true -Dpytest=enabled \
         -Duuid=bsd -Dtcl_version=tcl86 -Ddtrace=auto \
         -Dextra_lib_dirs=/usr/local/lib -Dextra_include_dirs=/usr/local/include/ \
         build
@@ -271,7 +273,9 @@ task:
         # -Duuid is not set for the NetBSD, see the comment below, above
         # configure_script, for more information.
       setup_additional_packages_script: |
-        #pkgin -y install ...
+        pkgin -y install \
+          py312-packaging \
+          py312-test
       <<: *netbsd_task_template
 
     - name: OpenBSD - Meson
@@ -285,7 +289,9 @@ task:
         UUID: -Duuid=e2fs
         TCL: -Dtcl_version=tcl86
       setup_additional_packages_script: |
-        #pkg_add -I ...
+        pkg_add -I \
+          py3-test \
+          py3-packaging
       # Always core dump to ${CORE_DUMP_DIR}
       set_core_dump_script: sysctl -w kern.nosuidcoredump=2
       <<: *openbsd_task_template
@@ -319,7 +325,7 @@ task:
       meson setup \
         --buildtype=debugoptimized \
         --pkg-config-path ${PKGCONFIG_PATH} \
-        -Dcassert=true -Dinjection_points=true \
+        -Dcassert=true -Dinjection_points=true -Dpytest=enabled \
         -Dssl=openssl ${UUID} ${TCL} \
         -DPG_TEST_EXTRA="$PG_TEST_EXTRA" \
         build
@@ -448,8 +454,10 @@ task:
     EOF
 
   setup_additional_packages_script: |
-    #apt-get update
-    #DEBIAN_FRONTEND=noninteractive apt-get -y install ...
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+      python3-pytest \
+      python3-packaging
 
   matrix:
     # SPECIAL:
@@ -472,7 +480,7 @@ task:
         su postgres <<-EOF
           ./configure \
             --enable-cassert --enable-injection-points --enable-debug \
-            --enable-tap-tests --enable-nls \
+            --enable-tap-tests --enable-pytest --enable-nls \
             --with-segsize-blocks=6 \
             --with-libnuma \
             --with-liburing \
