@@ -148,6 +148,7 @@ pgxs_bins = {
   'OPENSSL': openssl,
   'PERL': perl,
   'PROVE': prove,
+  'PYTEST': pytest,
   'PYTHON': python,
   'TAR': tar,
   'ZSTD': program_zstd,

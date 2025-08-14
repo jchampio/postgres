@@ -2443,6 +2443,10 @@ if test "$enable_pytest" = yes; then
     AC_MSG_RESULT([$modulestderr])
     AC_MSG_ERROR([Additional Python packages are required to run the pytest suites])
   fi
+  PGAC_PATH_PROGS(PYTEST, pytest py.test)
+  if test -z "$PYTEST"; then
+    AC_MSG_ERROR([pytest not found])
+  fi
 fi
 
 # If compiler will take -Wl,--as-needed (or various platform-specific
