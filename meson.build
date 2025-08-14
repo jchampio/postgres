@@ -1723,6 +1723,8 @@ endif
 ###############################################################
 
 pytest_enabled = false
+pytest = not_found_dep
+
 pytestopt = get_option('pytest')
 if not pytestopt.disabled()
   pytest_check = run_command(python, 'config/check_pytest.py',
@@ -1734,7 +1736,11 @@ if not pytestopt.disabled()
     else
       warning('Additional Python packages are required to run the pytest suites.')
     endif
-  else
+  endif
+
+  pytest = find_program(get_option('PYTEST'), native: true, required: pytestopt)
+
+  if pytest.found() and pytest_check.returncode() == 0
     pytest_enabled = true
   endif
 endif
