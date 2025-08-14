@@ -510,6 +510,26 @@ prove_installcheck = @echo "TAP tests not enabled. Try configuring with --enable
 prove_check = $(prove_installcheck)
 endif
 
+ifeq ($(enable_pytest),yes)
+
+pytest_installcheck = @echo "Installcheck is not currently supported for pytest."
+
+define pytest_check
+echo "# +++ pytest check in $(subdir) +++" && \
+rm -rf '$(CURDIR)'/tmp_check && \
+$(MKDIR_P) '$(CURDIR)'/tmp_check && \
+cd $(srcdir) && \
+   TESTLOGDIR='$(CURDIR)/tmp_check/log' \
+   TESTDATADIR='$(CURDIR)/tmp_check' \
+   $(with_temp_install) \
+   $(PYTEST) -c '$(abs_top_srcdir)/pytest.ini' --verbose -ra ./pyt/
+endef
+
+else
+pytest_installcheck = @echo "pytest is not enabled. Try configuring with --enable-pytest"
+pytest_check = $(pytest_installcheck)
+endif
+
 # Installation.
 
 install_bin = @install_bin@
