@@ -2,7 +2,6 @@
 
 import pytest
 import pg
-from pg.fixtures import libpq
 
 # This suite opens up TCP ports and is hidden behind PG_TEST_EXTRA=ssl.
 pytestmark = pg.require_test_extra("ssl")
@@ -19,7 +18,7 @@ def client_cert():
 
 
 def test_something(libpq):
-    pass
+    libpq.lib.PQconnectdb("hey, this doesn't work")
 
 
 def test_else():

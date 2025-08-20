@@ -1,9 +1,12 @@
 # Copyright (c) 2025, PostgreSQL Global Development Group
 
+import logging
 import os
-from typing import List
+from typing import List, Optional
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 def has_test_extra(key: str) -> bool:
@@ -34,3 +37,19 @@ def require_test_extra(*keys: str) -> bool:
         not all([has_test_extra(k) for k in keys]),
         reason="requires {} to be set in PG_TEST_EXTRA".format(", ".join(keys)),
     )
+
+
+def test_timeout_default() -> int:
+    """
+    Returns the value of the PG_TEST_TIMEOUT_DEFAULT environment variable, in
+    seconds, or 180 if one was not provided.
+    """
+    default = os.getenv("PG_TEST_TIMEOUT_DEFAULT", "")
+    if not default:
+        return 180
+
+    try:
+        return int(default)
+    except ValueError as v:
+        logger.warning("PG_TEST_TIMEOUT_DEFAULT could not be parsed: " + str(v))
+        return 180

@@ -3,6 +3,7 @@
 import pytest
 
 import pg
+from pg.fixtures import *
 
 
 @pytest.fixture
