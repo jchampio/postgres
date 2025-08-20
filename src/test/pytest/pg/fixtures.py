@@ -55,7 +55,15 @@ def libpq_handle():
     else:
         assert False, "the libpq fixture must be updated for {}".format(system)
 
-    lib = ctypes.CDLL(name)
+    # XXX ctypes.CDLL() is a little stricter with load paths on Windows. The
+    # preferred way around that is to know the absolute path to libpq.dll, but
+    # that doesn't seem to mesh well with the current test infrastructure. For
+    # now, enable "standard" LoadLibrary behavior.
+    loadopts = {}
+    if system == "Windows":
+        loadopts["winmode"] = 0
+
+    lib = ctypes.CDLL(name, **loadopts)
 
     #
     # Function Prototypes
