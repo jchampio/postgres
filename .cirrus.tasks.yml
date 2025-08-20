@@ -599,6 +599,7 @@ task:
     CIRRUS_WORKING_DIR: ${HOME}/pgsql/
     CCACHE_DIR: ${HOME}/ccache
     MACPORTS_CACHE: ${HOME}/macports-cache
+    PYTEST_DEBUG_TEMPROOT: /tmp  # default is too long for UNIX sockets on Mac
 
     MACOS_PACKAGE_LIST: >-
       ccache
