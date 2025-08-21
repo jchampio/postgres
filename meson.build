@@ -3833,6 +3833,7 @@ foreach test_dir : tests
         pytest.full_path(),
         '-c', meson.project_source_root() / 'pytest.ini',
         '--verbose',
+        '-p', 'pgtap',  # enable our test reporter plugin
         '-ra',  # show skipped and xfailed tests too
       ]
 
@@ -3842,6 +3843,7 @@ foreach test_dir : tests
       env.prepend('PATH', temp_install_bindir, test_dir['bd'], test_dir['bd'] / 'test')
       temp_install_datadir = '@0@@1@'.format(test_install_destdir, dir_prefix / dir_data)
       env.set('share_contrib_dir', temp_install_datadir / 'contrib')
+      env.prepend('PYTHONPATH', meson.project_source_root() / 'src' / 'test' / 'pytest' / 'plugins')
 
       foreach name, value : t.get('env', {})
         env.set(name, value)
@@ -3849,6 +3851,7 @@ foreach test_dir : tests
 
       test_group = test_dir['name']
       test_kwargs = {
+        'protocol': 'tap',
         'suite': test_group,
         'timeout': 1000,
         'depends': test_deps + t.get('deps', []),

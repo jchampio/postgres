@@ -521,6 +521,7 @@ $(MKDIR_P) '$(CURDIR)'/tmp_check && \
 cd $(srcdir) && \
    TESTLOGDIR='$(CURDIR)/tmp_check/log' \
    TESTDATADIR='$(CURDIR)/tmp_check' \
+   PYTHONPATH='$(abs_top_srcdir)/src/test/pytest/plugins:$$PYTHONPATH' \
    $(with_temp_install) \
    $(PYTEST) -c '$(abs_top_srcdir)/pytest.ini' --verbose -ra ./pyt/
 endef
