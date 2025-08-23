@@ -1,6 +1,9 @@
 # Copyright (c) 2025, PostgreSQL Global Development Group
 
 import datetime
+import os
+import socket
+import subprocess
 import tempfile
 from collections import namedtuple
 
@@ -127,3 +130,42 @@ def certs(cryptography, tmp_path_factory):
             return f.name
 
     return _Certs()
+
+
+@pytest.fixture(scope="session")
+def server_instance(certs, tmp_path_factory):
+    datadir = os.getenv("TESTDATADIR")
+    if not datadir:
+        datadir = tmp_path_factory.mktemp("tmp_check")
+
+    subprocess.check_call(["pg_ctl", "-D", datadir, "init"])
+
+    # Figure out a port to listen on. Attempt to reserve both IPv4 and IPv6
+    # addresses in one go.
+    #
+    # Note: socket.has_dualstack_ipv6/create_server are only in Python 3.8+.
+    if hasattr(socket, "has_dualstack_ipv6") and socket.has_dualstack_ipv6():
+        addr = ("::1", 0)
+        s = socket.create_server(addr, family=socket.AF_INET6, dualstack_ipv6=True)
+
+        hostaddr, port, _, _ = s.getsockname()
+        addrs = [hostaddr, "127.0.0.1"]
+
+    else:
+        addr = ("127.0.0.1", 0)
+
+        s = socket.socket()
+        s.bind(addr)
+
+        hostaddr, port = s.getsockname()
+        addrs = [hostaddr]
+
+    with s, open(os.path.join(datadir, "postgresql.conf"), "a") as f:
+        print(file=f)
+        print("unix_socket_directories = ''", file=f)
+        print("listen_addresses = '{}'".format(",".join(addrs)), file=f)
+        print("port =", port, file=f)
+
+    subprocess.check_call(["pg_ctl", "-D", datadir, "start"])
+    yield (hostaddr, port)
+    subprocess.check_call(["pg_ctl", "-D", datadir, "stop"])
