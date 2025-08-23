@@ -1719,6 +1719,35 @@ endif
 
 
 ###############################################################
+# Library: pytest
+###############################################################
+
+pytest_enabled = false
+pytest = not_found_dep
+
+pytestopt = get_option('pytest')
+if not pytestopt.disabled()
+  pytest_check = run_command(python, 'config/check_pytest.py',
+                             'config/pytest-requirements.txt', check: false)
+  if pytest_check.returncode() != 0
+    message(pytest_check.stderr().strip())
+    if pytestopt.enabled()
+      error('Additional Python packages are required to run the pytest suites.')
+    else
+      warning('Additional Python packages are required to run the pytest suites.')
+    endif
+  endif
+
+  pytest = find_program(get_option('PYTEST'), native: true, required: pytestopt)
+
+  if pytest.found() and pytest_check.returncode() == 0
+    pytest_enabled = true
+  endif
+endif
+
+
+
+###############################################################
 # Library: zstd
 ###############################################################
 
@@ -3790,6 +3819,63 @@ foreach test_dir : tests
             '--testname', onetap_p,
             '--', test_command,
             test_dir['sd'] / onetap,
+          ],
+        )
+      endforeach
+      install_suites += test_group
+    elif kind == 'pytest'
+      testwrap_pytest = testwrap_base
+      if not pytest_enabled
+        testwrap_pytest += ['--skip', 'pytest not enabled']
+      endif
+
+      test_command = [
+        pytest.full_path(),
+        '-c', meson.project_source_root() / 'pytest.ini',
+        '--verbose',
+        '-p', 'pgtap',  # enable our test reporter plugin
+        '-ra',  # show skipped and xfailed tests too
+      ]
+
+      # Add temporary install, the build directory for non-installed binaries and
+      # also test/ for non-installed test binaries built separately.
+      env = test_env
+      env.prepend('PATH', temp_install_bindir, test_dir['bd'], test_dir['bd'] / 'test')
+      temp_install_datadir = '@0@@1@'.format(test_install_destdir, dir_prefix / dir_data)
+      env.set('share_contrib_dir', temp_install_datadir / 'contrib')
+      env.prepend('PYTHONPATH', meson.project_source_root() / 'src' / 'test' / 'pytest' / 'plugins')
+
+      foreach name, value : t.get('env', {})
+        env.set(name, value)
+      endforeach
+
+      test_group = test_dir['name']
+      test_kwargs = {
+        'protocol': 'tap',
+        'suite': test_group,
+        'timeout': 1000,
+        'depends': test_deps + t.get('deps', []),
+        'env': env,
+      } + t.get('test_kwargs', {})
+
+      foreach onetest : t['tests']
+        # Make test names prettier, remove pyt/ and .py
+        onetest_p = onetest
+        if onetest_p.startswith('pyt/')
+          onetest_p = onetest.split('pyt/')[1]
+        endif
+        if onetest_p.endswith('.py')
+          onetest_p = fs.stem(onetest_p)
+        endif
+
+        test(test_dir['name'] / onetest_p,
+          python,
+          kwargs: test_kwargs,
+          args: testwrap_pytest + [
+            '--testgroup', test_dir['name'],
+            '--testname', onetest_p,
+            '--', test_command,
+            test_dir['sd'] / onetest,
           ],
         )
       endforeach

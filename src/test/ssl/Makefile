@@ -30,6 +30,7 @@ clean distclean:
 # Doesn't depend on sslfiles because we don't rebuild them by default
 check:
 	$(prove_check)
+	$(pytest_check)
 
 installcheck:
 	$(prove_installcheck)

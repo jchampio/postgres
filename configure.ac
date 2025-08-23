@@ -231,11 +231,16 @@ AC_SUBST(DTRACEFLAGS)])
 AC_SUBST(enable_dtrace)
 
 #
-# TAP tests
+# Test frameworks
 #
 PGAC_ARG_BOOL(enable, tap-tests, no,
-              [enable TAP tests (requires Perl and IPC::Run)])
+              [enable (Perl-based) TAP tests (requires Perl and IPC::Run)])
 AC_SUBST(enable_tap_tests)
+
+PGAC_ARG_BOOL(enable, pytest, no,
+              [enable (Python-based) pytest suites (requires Python)])
+AC_SUBST(enable_pytest)
+
 AC_ARG_VAR(PG_TEST_EXTRA,
            [enable selected extra tests (overridden at runtime by PG_TEST_EXTRA environment variable)])
 
@@ -2420,6 +2425,27 @@ if test "$enable_tap_tests" = yes; then
     # on failure, though, show the results to the user
     AC_MSG_RESULT([$modulestderr])
     AC_MSG_ERROR([Additional Perl modules are required to run TAP tests])
+  fi
+fi
+
+if test "$enable_pytest" = yes; then
+  # Mirror the prove checks, above, for pytest. We don't require the user to
+  # have selected --with-python, but we do need a Python installation.
+  if test -z "$PYTHON"; then
+    PGAC_PATH_PYTHON
+  fi
+  AC_MSG_CHECKING(for Python packages required for pytest)
+  [modulestderr=`"$PYTHON" "$srcdir/config/check_pytest.py" "$srcdir/config/pytest-requirements.txt" 2>&1 >/dev/null`]
+  if test $? -eq 0; then
+    echo "$modulestderr" >&AS_MESSAGE_LOG_FD
+    AC_MSG_RESULT(yes)
+  else
+    AC_MSG_RESULT([$modulestderr])
+    AC_MSG_ERROR([Additional Python packages are required to run the pytest suites])
+  fi
+  PGAC_PATH_PROGS(PYTEST, pytest py.test)
+  if test -z "$PYTEST"; then
+    AC_MSG_ERROR([pytest not found])
   fi
 fi
 
