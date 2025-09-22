@@ -32,17 +32,6 @@ except ImportError:
         metadata = None
 
 
-def test_packages(requirements_file):
-    """
-    Entry point.
-    """
-    with open(requirements_file, "r") as f:
-        requirements = f.readlines()
-
-    all_found = packaging_check(requirements)
-    assert all_found, "required packages are missing"
-
-
 def report(*args):
     """
     Prints a configure-time message to the user. (The configure scripts will
@@ -141,3 +130,21 @@ def packaging_check(requirements: List[str]) -> bool:
         report(f"package '{req.name}': installed (version {version})")
 
     return found
+
+
+def test_packages(requirements_file):
+    """
+    Entry point.
+    """
+    try:
+        with open(requirements_file, "r") as f:
+            requirements = f.readlines()
+
+        all_found = packaging_check(requirements)
+
+    except Exception as err:
+        # Surface any breakage to the configure script before failing the test.
+        report(err)
+        raise
+
+    assert all_found, "required packages are missing"
