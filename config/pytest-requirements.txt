@@ -17,6 +17,5 @@
 # throughout once we drop support for Python 3.7.)
 pytest >= 7.0, < 9
 
-# These are meta-packages which allow check_pytest.py to run.
+# packaging is used by check_pytest.py at configure time.
 packaging
-importlib_metadata ; python_version < "3.8"

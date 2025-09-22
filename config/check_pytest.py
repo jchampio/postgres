@@ -4,60 +4,107 @@
 # easier with pip, but requiring pip on build machines is a non-starter for
 # many.
 #
+# This is coded as a pytest suite in order to check the Python distribution in
+# use by pytest, as opposed to the Python distribution being linked against
+# Postgres. In some setups they are separate.
+#
 # The design philosophy of this script is to bend over backwards to help people
 # figure out what is missing. The target audience for error output is the
 # buildfarm operator who just wants to get the tests running, not the test
 # developer who presumably already knows how to solve these problems.
 
+import importlib
 import sys
-from typing import List  # TODO: Python 3.9 will remove the need for this
+from typing import List, Union  # needed for earlier Python versions
+
+# importlib.metadata is part of the standard library from 3.8 onwards. Earlier
+# Python versions have an official backport called importlib_metadata, which can
+# generally be installed as a separate OS package (python3-importlib-metadata).
+# This complication can be removed once we stop supporting Python 3.7.
+try:
+    from importlib import metadata
+except ImportError:
+    try:
+        import importlib_metadata as metadata
+    except ImportError:
+        # package_version() will need to fall back. This is unlikely to happen
+        # in practice, because pytest 7.x depends on importlib_metadata itself.
+        metadata = None
 
 
-def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: python {} REQUIREMENTS_FILE".format(sys.argv[0]))
-
-    requirements_file = sys.argv[1]
+def test_packages(requirements_file):
+    """
+    Entry point.
+    """
     with open(requirements_file, "r") as f:
         requirements = f.readlines()
 
-    found = packaging_check(requirements)
-    if not found:
-        sys.exit("See src/test/pytest/README for package installation help.")
+    all_found = packaging_check(requirements)
+    assert all_found, "required packages are missing"
+
+
+def report(*args):
+    """
+    Prints a configure-time message to the user. (The configure scripts will
+    display these messages and ignore the output from the pytest suite.) This
+    assumes --capture=no is in use, to avoid pytest's standard stream capture.
+    """
+    print(*args, file=sys.stderr)
+
+
+def package_version(pkg: str) -> Union[str, None]:
+    """
+    Returns the version of the named package, or None if the package is not
+    installed.
+
+    This function prefers to use the distribution package version, if we have
+    the necessary prerequisites. Otherwise it will fall back to the __version__
+    of the imported module, which aligns with pytest.importorskip().
+    """
+    if metadata is not None:
+        try:
+            return metadata.version(pkg)
+        except metadata.PackageNotFoundError:
+            return None
+
+    # This is an older Python and we don't have importlib_metadata. Fall back to
+    # __version__ instead.
+    try:
+        mod = importlib.import_module(pkg)
+    except ModuleNotFoundError:
+        return None
+
+    if hasattr(mod, "__version__"):
+        return mod.__version__
+
+    # We're out of options. If this turns out to cause problems in practice, we
+    # might need to require importlib_metadata on older buildfarm members. But
+    # since our top-level requirements list will be small, and this possibility
+    # will eventually age out with newer Pythons, don't spend more effort on
+    # this case for now.
+    report(f"Fix check_pytest.py! {pkg} has no __version__")
+    assert False, "internal error in package_version()"
 
 
 def packaging_check(requirements: List[str]) -> bool:
     """
-    The preferred dependency check, which unfortunately needs newer Python
-    facilities. Returns True if all dependencies were found.
+    Reports the status of each required package to the configure program.
+    Returns True if all dependencies were found.
     """
-    try:
-        # First, attempt to find importlib.metadata. This is part of the
-        # standard library from 3.8 onwards. Earlier Python versions have an
-        # official backport called importlib_metadata, which can generally be
-        # installed as a separate OS package (e.g. python3-importlib-metadata).
-        # This complication can be removed once we stop supporting Python 3.7.
-        try:
-            from importlib import metadata
-        except ImportError:
-            import importlib_metadata as metadata
+    report()  # an opening newline makes the configure output easier to read
 
+    try:
         # packaging contains the PyPA definitions of requirement specifiers.
-        # This is again contained in a separate OS package (for example,
-        # python3-packaging).
+        # This is contained in a separate OS package (for example,
+        # python3-packaging), but it's extremely likely that the user has it
+        # installed already, because modern versions of pytest depend on it too.
         import packaging
         from packaging.requirements import Requirement
 
     except ImportError as err:
         # We don't even have enough prerequisites to check our prerequisites.
-        # Try to fall back on the deprecated parser, to get a better error
-        # message.
-        found = setuptools_fallback(requirements)
-
-        if not found:
-            # Well, the best we can do is just print the import error as-is.
-            print(err, file=sys.stderr)
-
+        # Print the import error as-is.
+        report(err)
         return False
 
     # Strip extraneous whitespace, whole-line comments, and empty lines from our
@@ -74,65 +121,23 @@ def packaging_check(requirements: List[str]) -> bool:
             continue
 
         # Make sure the package is installed...
-        try:
-            version = metadata.version(req.name)
-        except metadata.PackageNotFoundError:
-            print("Package '{}' is not installed".format(req.name), file=sys.stderr)
+        version = package_version(req.name)
+        if version is None:
+            report(f"package '{req.name}': not installed")
             found = False
             continue
 
         # ...and that it has a compatible version.
         if not req.specifier.contains(version):
-            print(
-                "Package '{}' has version {}, but '{}' is required".format(
+            report(
+                "package '{}': has version {}, but '{}' is required".format(
                     req.name, version, req.specifier
                 ),
-                file=sys.stderr,
             )
             found = False
             continue
 
+        # Report installed packages too, to mirror check_modules.pl.
+        report(f"package '{req.name}': installed (version {version})")
+
     return found
-
-
-def setuptools_fallback(requirements: List[str]) -> bool:
-    """
-    An alternative dependency helper, based on the old deprecated pkg_resources
-    module in setuptools, which is pretty widely available in older Pythons. The
-    point of this is to bootstrap the user into an environment that can run the
-    packaging_check().
-
-    Returns False if pkg_resources is also unavailable, in which case we just
-    have to do our best.
-    """
-    try:
-        import pkg_resources
-    except ModuleNotFoundError:
-        return False
-
-    # An extra newline makes the Autoconf output easier to read.
-    print(file=sys.stderr)
-
-    # Go one-by-one through the requirements, printing each missing dependency.
-    found = True
-    for r in requirements:
-        try:
-            pkg_resources.require(r)
-        except pkg_resources.DistributionNotFound as err:
-            # The error descriptions given here are pretty good as-is.
-            print(err, file=sys.stderr)
-            found = False
-        except pkg_resources.RequirementParseError as err:
-            assert False  # TODO
-
-    # The only reason the fallback would be called is if we're missing required
-    # packages. So if we "found them", the requirements file is broken...
-    assert (
-        not found
-    ), "setuptools_fallback() succeeded unexpectedly; is the requirements file incomplete?"
-
-    return True
-
-
-if __name__ == "__main__":
-    main()

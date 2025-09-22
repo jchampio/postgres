@@ -1711,21 +1711,25 @@ pytest = not_found_dep
 
 pytestopt = get_option('pytest')
 if not pytestopt.disabled()
-  pytest_check = run_command(python, 'config/check_pytest.py',
-                             'config/pytest-requirements.txt', check: false)
-  if pytest_check.returncode() != 0
-    message(pytest_check.stderr().strip())
-    if pytestopt.enabled()
-      error('Additional Python packages are required to run the pytest suites.')
-    else
-      warning('Additional Python packages are required to run the pytest suites.')
-    endif
-  endif
-
   pytest = find_program(get_option('PYTEST'), native: true, required: pytestopt)
-
-  if pytest.found() and pytest_check.returncode() == 0
-    pytest_enabled = true
+  if pytest.found()
+    pytest_check = run_command(pytest,
+                               '-c', 'pytest.ini',
+                               '--confcutdir=config',
+                               '--capture=no',
+                               'config/check_pytest.py',
+                               '--requirements', 'config/pytest-requirements.txt',
+                               check: false)
+    if pytest_check.returncode() != 0
+      message(pytest_check.stderr())
+      if pytestopt.enabled()
+        error('Additional Python packages are required to run the pytest suites.')
+      else
+        warning('Additional Python packages are required to run the pytest suites.')
+      endif
+    else
+      pytest_enabled = true
+    endif
   endif
 endif
 
