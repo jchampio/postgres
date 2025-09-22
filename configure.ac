@@ -95,12 +95,6 @@ AC_MSG_RESULT([$template])
 PORTNAME=$template
 AC_SUBST(PORTNAME)
 
-# Initialize default assumption that we do not need separate assembly code
-# for TAS (test-and-set).  This can be overridden by the template file
-# when it's executed.
-need_tas=no
-tas_file=dummy.s
-
 # Default, works for most platforms, override in template file if needed
 DLSUFFIX=".so"
 
@@ -231,11 +225,16 @@ AC_SUBST(DTRACEFLAGS)])
 AC_SUBST(enable_dtrace)
 
 #
-# TAP tests
+# Test frameworks
 #
 PGAC_ARG_BOOL(enable, tap-tests, no,
-              [enable TAP tests (requires Perl and IPC::Run)])
+              [enable (Perl-based) TAP tests (requires Perl and IPC::Run)])
 AC_SUBST(enable_tap_tests)
+
+PGAC_ARG_BOOL(enable, pytest, no,
+              [enable (Python-based) pytest suites (requires Python)])
+AC_SUBST(enable_pytest)
+
 AC_ARG_VAR(PG_TEST_EXTRA,
            [enable selected extra tests (overridden at runtime by PG_TEST_EXTRA environment variable)])
 
@@ -399,14 +398,6 @@ AC_PROG_CXX([$pgac_cxx_list])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [@%:@ifndef __INTEL_COMPILER
 choke me
 @%:@endif])], [ICC=yes], [ICC=no])
-
-# Check if it's Sun Studio compiler. We assume that
-# __SUNPRO_C will be defined for Sun Studio compilers
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [@%:@ifndef __SUNPRO_C
-choke me
-@%:@endif])], [SUN_STUDIO_CC=yes], [SUN_STUDIO_CC=no])
-
-AC_SUBST(SUN_STUDIO_CC)
 
 
 #
@@ -618,7 +609,7 @@ fi
 # __attribute__((visibility("hidden"))) is supported, if we encounter a
 # compiler that supports one of the supported variants of -fvisibility=hidden
 # but uses a different syntax to mark a symbol as exported.
-if test "$GCC" = yes -o "$SUN_STUDIO_CC" = yes ; then
+if test "$GCC" = yes; then
   PGAC_PROG_CC_VAR_OPT(CFLAGS_SL_MODULE, [-fvisibility=hidden])
   # For C++ we additionally want -fvisibility-inlines-hidden
   PGAC_PROG_VARCXX_VARFLAGS_OPT(CXX, CXXFLAGS_SL_MODULE, [-fvisibility=hidden])
@@ -773,19 +764,6 @@ fi
 AC_PROG_CPP
 AC_SUBST(GCC)
 
-
-#
-# Set up TAS assembly code if needed; the template file has now had its
-# chance to request this.
-#
-AC_CONFIG_LINKS([src/backend/port/tas.s:src/backend/port/tas/${tas_file}])
-
-if test "$need_tas" = yes ; then
-  TAS=tas.o
-else
-  TAS=""
-fi
-AC_SUBST(TAS)
 
 AC_SUBST(DLSUFFIX)dnl
 AC_DEFINE_UNQUOTED([DLSUFFIX], ["$DLSUFFIX"],
@@ -2442,6 +2420,22 @@ if test "$enable_tap_tests" = yes; then
   fi
 fi
 
+if test "$enable_pytest" = yes; then
+  PGAC_PATH_PROGS(PYTEST, pytest py.test)
+  if test -z "$PYTEST"; then
+    AC_MSG_ERROR([pytest not found])
+  fi
+  AC_MSG_CHECKING(for Python packages required for pytest)
+  [modulestderr=`$PYTEST -c "$srcdir/pytest.ini" --confcutdir="$srcdir/config" --capture=no "$srcdir/config/check_pytest.py" --requirements "$srcdir/config/pytest-requirements.txt" 2>&1 >/dev/null`]
+  if test $? -eq 0; then
+    echo "$modulestderr" >&AS_MESSAGE_LOG_FD
+    AC_MSG_RESULT(yes)
+  else
+    AC_MSG_RESULT([$modulestderr])
+    AC_MSG_ERROR([Additional Python packages are required to run the pytest suites])
+  fi
+fi
+
 # If compiler will take -Wl,--as-needed (or various platform-specific
 # spellings thereof) then add that to LDFLAGS.  This is much easier than
 # trying to filter LIBS to the minimum for each executable.
@@ -2478,8 +2472,6 @@ AC_SUBST(LDFLAGS_EX_BE)
 if test x"$GCC" = x"yes" ; then
   cc_string=`${CC} --version | sed q`
   case $cc_string in [[A-Za-z]]*) ;; *) cc_string="GCC $cc_string";; esac
-elif test x"$SUN_STUDIO_CC" = x"yes" ; then
-  cc_string=`${CC} -V 2>&1 | sed q`
 else
   cc_string=$CC
 fi

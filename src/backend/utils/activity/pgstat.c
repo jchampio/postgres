@@ -932,7 +932,7 @@ pgstat_clear_snapshot(void)
 void *
 pgstat_fetch_entry(PgStat_Kind kind, Oid dboid, uint64 objid)
 {
-	PgStat_HashKey key;
+	PgStat_HashKey key = {0};
 	PgStat_EntryRef *entry_ref;
 	void	   *stats_data;
 	const PgStat_KindInfo *kind_info = pgstat_get_kind_info(kind);
@@ -942,9 +942,6 @@ pgstat_fetch_entry(PgStat_Kind kind, Oid dboid, uint64 objid)
 	Assert(!kind_info->fixed_amount);
 
 	pgstat_prep_snapshot();
-
-	/* clear padding */
-	memset(&key, 0, sizeof(struct PgStat_HashKey));
 
 	key.kind = kind;
 	key.dboid = dboid;
@@ -1975,6 +1972,17 @@ pgstat_read_statsfile(void)
 
 					header = pgstat_init_entry(key.kind, p);
 					dshash_release_lock(pgStatLocal.shared_hash, p);
+					if (header == NULL)
+					{
+						/*
+						 * It would be tempting to switch this ERROR to a
+						 * WARNING, but it would mean that all the statistics
+						 * are discarded when the environment fails on OOM.
+						 */
+						elog(ERROR, "could not allocate entry %u/%u/%" PRIu64 " of type %c",
+							 key.kind, key.dboid,
+							 key.objid, t);
+					}
 
 					if (!read_chunk(fpin,
 									pgstat_get_entry_data(key.kind, header),

@@ -42,6 +42,7 @@
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "partitioning/partdesc.h"
+#include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "statistics/statistics.h"
 #include "storage/bufmgr.h"
@@ -62,7 +63,7 @@ get_relation_info_hook_type get_relation_info_hook = NULL;
 typedef struct NotnullHashEntry
 {
 	Oid			relid;			/* OID of the relation */
-	Relids		notnullattnums; /* attnums of NOT NULL columns */
+	Bitmapset  *notnullattnums; /* attnums of NOT NULL columns */
 } NotnullHashEntry;
 
 
@@ -683,7 +684,7 @@ get_relation_notnullatts(PlannerInfo *root, Relation relation)
 	Oid			relid = RelationGetRelid(relation);
 	NotnullHashEntry *hentry;
 	bool		found;
-	Relids		notnullattnums = NULL;
+	Bitmapset  *notnullattnums = NULL;
 
 	/* bail out if the relation has no not-null constraints */
 	if (relation->rd_att->constr == NULL ||
@@ -750,7 +751,7 @@ get_relation_notnullatts(PlannerInfo *root, Relation relation)
  *	  Searches the hash table and returns the column not-null constraint
  *	  information for a given relation.
  */
-Relids
+Bitmapset *
 find_relation_notnullatts(PlannerInfo *root, Oid relid)
 {
 	NotnullHashEntry *hentry;
@@ -1482,6 +1483,14 @@ get_relation_constraints(PlannerInfo *root,
 		result = list_concat(result, rel->partition_qual);
 	}
 
+	/*
+	 * Expand virtual generated columns in the constraint expressions.
+	 */
+	if (result)
+		result = (List *) expand_generated_columns_in_expr((Node *) result,
+														   relation,
+														   varno);
+
 	table_close(relation, NoLock);
 
 	return result;
@@ -2134,9 +2143,8 @@ join_selectivity(PlannerInfo *root,
 /*
  * function_selectivity
  *
- * Returns the selectivity of a specified boolean function clause.
- * This code executes registered procedures stored in the
- * pg_proc relation, by calling the function manager.
+ * Attempt to estimate the selectivity of a specified boolean function clause
+ * by asking its support function.  If the function lacks support, return -1.
  *
  * See clause_selectivity() for the meaning of the additional parameters.
  */
@@ -2154,15 +2162,8 @@ function_selectivity(PlannerInfo *root,
 	SupportRequestSelectivity req;
 	SupportRequestSelectivity *sresult;
 
-	/*
-	 * If no support function is provided, use our historical default
-	 * estimate, 0.3333333.  This seems a pretty unprincipled choice, but
-	 * Postgres has been using that estimate for function calls since 1992.
-	 * The hoariness of this behavior suggests that we should not be in too
-	 * much hurry to use another value.
-	 */
 	if (!prosupport)
-		return (Selectivity) 0.3333333;
+		return (Selectivity) -1;	/* no support function */
 
 	req.type = T_SupportRequestSelectivity;
 	req.root = root;
@@ -2179,9 +2180,8 @@ function_selectivity(PlannerInfo *root,
 		DatumGetPointer(OidFunctionCall1(prosupport,
 										 PointerGetDatum(&req)));
 
-	/* If support function fails, use default */
 	if (sresult != &req)
-		return (Selectivity) 0.3333333;
+		return (Selectivity) -1;	/* function did not honor request */
 
 	if (req.selectivity < 0.0 || req.selectivity > 1.0)
 		elog(ERROR, "invalid function selectivity: %f", req.selectivity);

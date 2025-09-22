@@ -56,14 +56,13 @@ pgxs_kv = {
   'enable_nls': libintl.found() ? 'yes' : 'no',
   'enable_injection_points': get_option('injection_points') ? 'yes' : 'no',
   'enable_tap_tests': tap_tests_enabled ? 'yes' : 'no',
+  'enable_pytest': pytest_enabled ? 'yes' : 'no',
   'enable_debug': get_option('debug') ? 'yes' : 'no',
   'enable_coverage': 'no',
   'enable_dtrace': dtrace.found() ? 'yes' : 'no',
 
   'DLSUFFIX': dlsuffix,
   'EXEEXT': exesuffix,
-
-  'SUN_STUDIO_CC': 'no', # not supported so far
 
   # want the chosen option, rather than the library
   'with_ssl' : ssl_library,
@@ -147,6 +146,7 @@ pgxs_bins = {
   'OPENSSL': openssl,
   'PERL': perl,
   'PROVE': prove,
+  'PYTEST': pytest,
   'PYTHON': python,
   'TAR': tar,
   'ZSTD': program_zstd,
@@ -179,7 +179,7 @@ pgxs_empty = [
   'WANTED_LANGUAGES',
 
   # Not needed because we don't build the server / PLs with the generated makefile
-  'LIBOBJS', 'PG_CRC32C_OBJS', 'TAS',
+  'LIBOBJS', 'PG_CRC32C_OBJS',
   'PG_TEST_EXTRA',
   'DTRACEFLAGS', # only server has dtrace probes
 

@@ -630,6 +630,7 @@ vpath_build
 PG_SYSROOT
 PG_VERSION_NUM
 LDFLAGS_EX_BE
+PYTEST
 PROVE
 DBTOEPUB
 FOP
@@ -739,7 +740,6 @@ PKG_CONFIG_LIBDIR
 PKG_CONFIG_PATH
 PKG_CONFIG
 DLSUFFIX
-TAS
 GCC
 CPP
 CFLAGS_SL
@@ -760,7 +760,6 @@ CLANG
 LLVM_CONFIG
 AWK
 with_llvm
-SUN_STUDIO_CC
 ac_ct_CXX
 CXXFLAGS
 CXX
@@ -773,6 +772,7 @@ CFLAGS
 CC
 enable_injection_points
 PG_TEST_EXTRA
+enable_pytest
 enable_tap_tests
 enable_dtrace
 DTRACEFLAGS
@@ -851,6 +851,7 @@ enable_profiling
 enable_coverage
 enable_dtrace
 enable_tap_tests
+enable_pytest
 enable_injection_points
 with_blocksize
 with_segsize
@@ -1551,7 +1552,10 @@ Optional Features:
   --enable-profiling      build with profiling enabled
   --enable-coverage       build with coverage testing instrumentation
   --enable-dtrace         build with DTrace support
-  --enable-tap-tests      enable TAP tests (requires Perl and IPC::Run)
+  --enable-tap-tests      enable (Perl-based) TAP tests (requires Perl and
+                          IPC::Run)
+  --enable-pytest         enable (Python-based) pytest suites (requires
+                          Python)
   --enable-injection-points
                           enable injection points (for testing)
   --enable-depend         turn on automatic dependency tracking
@@ -3059,12 +3063,6 @@ $as_echo "$template" >&6; }
 PORTNAME=$template
 
 
-# Initialize default assumption that we do not need separate assembly code
-# for TAS (test-and-set).  This can be overridden by the template file
-# when it's executed.
-need_tas=no
-tas_file=dummy.s
-
 # Default, works for most platforms, override in template file if needed
 DLSUFFIX=".so"
 
@@ -3639,7 +3637,7 @@ fi
 
 
 #
-# TAP tests
+# Test frameworks
 #
 
 
@@ -3662,6 +3660,32 @@ else
   enable_tap_tests=no
 
 fi
+
+
+
+
+
+
+# Check whether --enable-pytest was given.
+if test "${enable_pytest+set}" = set; then :
+  enableval=$enable_pytest;
+  case $enableval in
+    yes)
+      :
+      ;;
+    no)
+      :
+      ;;
+    *)
+      as_fn_error $? "no argument expected for --enable-pytest option" "$LINENO" 5
+      ;;
+  esac
+
+else
+  enable_pytest=no
+
+fi
+
 
 
 
@@ -4798,30 +4822,6 @@ else
   ICC=no
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-
-# Check if it's Sun Studio compiler. We assume that
-# __SUNPRO_C will be defined for Sun Studio compilers
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-int
-main ()
-{
-#ifndef __SUNPRO_C
-choke me
-#endif
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-  SUN_STUDIO_CC=yes
-else
-  SUN_STUDIO_CC=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-
-
 
 
 #
@@ -6748,7 +6748,7 @@ fi
 # __attribute__((visibility("hidden"))) is supported, if we encounter a
 # compiler that supports one of the supported variants of -fvisibility=hidden
 # but uses a different syntax to mark a symbol as exported.
-if test "$GCC" = yes -o "$SUN_STUDIO_CC" = yes ; then
+if test "$GCC" = yes; then
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether ${CC} supports -fvisibility=hidden, for CFLAGS_SL_MODULE" >&5
 $as_echo_n "checking whether ${CC} supports -fvisibility=hidden, for CFLAGS_SL_MODULE... " >&6; }
 if ${pgac_cv_prog_CC_cflags__fvisibility_hidden+:} false; then :
@@ -7729,20 +7729,6 @@ ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $
 ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
-
-
-#
-# Set up TAS assembly code if needed; the template file has now had its
-# chance to request this.
-#
-ac_config_links="$ac_config_links src/backend/port/tas.s:src/backend/port/tas/${tas_file}"
-
-
-if test "$need_tas" = yes ; then
-  TAS=tas.o
-else
-  TAS=""
-fi
 
 
 
@@ -17141,7 +17127,7 @@ else
 /* end confdefs.h.  */
 
 /* This must match the corresponding code in c.h: */
-#if defined(__GNUC__) || defined(__SUNPRO_C)
+#if defined(__GNUC__)
 #define pg_attribute_aligned(a) __attribute__((aligned(a)))
 #elif defined(_MSC_VER)
 #define pg_attribute_aligned(a) __declspec(align(a))
@@ -19120,6 +19106,78 @@ $as_echo "$modulestderr" >&6; }
   fi
 fi
 
+if test "$enable_pytest" = yes; then
+  if test -z "$PYTEST"; then
+  for ac_prog in pytest py.test
+do
+  # Extract the first word of "$ac_prog", so it can be a program name with args.
+set dummy $ac_prog; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_PYTEST+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $PYTEST in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_PYTEST="$PYTEST" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_PYTEST="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+PYTEST=$ac_cv_path_PYTEST
+if test -n "$PYTEST"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $PYTEST" >&5
+$as_echo "$PYTEST" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+  test -n "$PYTEST" && break
+done
+
+else
+  # Report the value of PYTEST in configure's output in all cases.
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for PYTEST" >&5
+$as_echo_n "checking for PYTEST... " >&6; }
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $PYTEST" >&5
+$as_echo "$PYTEST" >&6; }
+fi
+
+  if test -z "$PYTEST"; then
+    as_fn_error $? "pytest not found" "$LINENO" 5
+  fi
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for Python packages required for pytest" >&5
+$as_echo_n "checking for Python packages required for pytest... " >&6; }
+  modulestderr=`$PYTEST -c "$srcdir/pytest.ini" --confcutdir="$srcdir/config" --capture=no "$srcdir/config/check_pytest.py" --requirements "$srcdir/config/pytest-requirements.txt" 2>&1 >/dev/null`
+  if test $? -eq 0; then
+    echo "$modulestderr" >&5
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+  else
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: $modulestderr" >&5
+$as_echo "$modulestderr" >&6; }
+    as_fn_error $? "Additional Python packages are required to run the pytest suites" "$LINENO" 5
+  fi
+fi
+
 # If compiler will take -Wl,--as-needed (or various platform-specific
 # spellings thereof) then add that to LDFLAGS.  This is much easier than
 # trying to filter LIBS to the minimum for each executable.
@@ -19344,8 +19402,6 @@ fi
 if test x"$GCC" = x"yes" ; then
   cc_string=`${CC} --version | sed q`
   case $cc_string in [A-Za-z]*) ;; *) cc_string="GCC $cc_string";; esac
-elif test x"$SUN_STUDIO_CC" = x"yes" ; then
-  cc_string=`${CC} -V 2>&1 | sed q`
 else
   cc_string=$CC
 fi
@@ -20142,7 +20198,6 @@ cat >>$CONFIG_STATUS <<\_ACEOF || ac_write_fail=1
 for ac_config_target in $ac_config_targets
 do
   case $ac_config_target in
-    "src/backend/port/tas.s") CONFIG_LINKS="$CONFIG_LINKS src/backend/port/tas.s:src/backend/port/tas/${tas_file}" ;;
     "GNUmakefile") CONFIG_FILES="$CONFIG_FILES GNUmakefile" ;;
     "src/Makefile.global") CONFIG_FILES="$CONFIG_FILES src/Makefile.global" ;;
     "src/backend/port/pg_sema.c") CONFIG_LINKS="$CONFIG_LINKS src/backend/port/pg_sema.c:${SEMA_IMPLEMENTATION}" ;;

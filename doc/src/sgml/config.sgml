@@ -7383,6 +7383,11 @@ local0.*    /var/log/postgresql
      </varlistentry>
 
      <varlistentry id="guc-debug-print-parse">
+      <term><varname>debug_print_raw_parse</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>debug_print_raw_parse</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
       <term><varname>debug_print_parse</varname> (<type>boolean</type>)
       <indexterm>
        <primary><varname>debug_print_parse</varname> configuration parameter</primary>
@@ -7401,8 +7406,8 @@ local0.*    /var/log/postgresql
       <listitem>
        <para>
         These parameters enable various debugging output to be emitted.
-        When set, they print the resulting parse tree, the query rewriter
-        output, or the execution plan for each executed query.
+        When set, they print the resulting raw parse tree, the parse tree, the query
+        rewriter output, or the execution plan for each executed query.
         These messages are emitted at <literal>LOG</literal> message level, so by
         default they will appear in the server log but will not be sent to the
         client.  You can change that by adjusting
@@ -7422,7 +7427,8 @@ local0.*    /var/log/postgresql
       <listitem>
        <para>
         When set, <varname>debug_pretty_print</varname> indents the messages
-        produced by <varname>debug_print_parse</varname>,
+        produced by <varname>debug_print_raw_parse</varname>,
+        <varname>debug_print_parse</varname>,
         <varname>debug_print_rewritten</varname>, or
         <varname>debug_print_plan</varname>.  This results in more readable
         but much longer output than the <quote>compact</quote> format used when
@@ -7923,7 +7929,7 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
         Controls whether a log message is produced when a session waits
         longer than <xref linkend="guc-deadlock-timeout"/> to acquire a
         lock.  This is useful in determining if lock waits are causing
-        poor performance.  The default is <literal>off</literal>.
+        poor performance.  The default is <literal>on</literal>.
         Only superusers and users with the appropriate <literal>SET</literal>
         privilege can change this setting.
        </para>
@@ -11057,6 +11063,12 @@ extension_control_path = 'C:\tools\postgresql;H:\my_project\share;$system'
         The default value for this parameter is
         <literal>'$system'</literal>. If the value is set to an empty
         string, the default <literal>'$system'</literal> is also assumed.
+       </para>
+
+       <para>
+        If extensions with equal names are present in multiple directories in
+        the configured path, only the instance found first in the path will be
+        used.
        </para>
 
        <para>

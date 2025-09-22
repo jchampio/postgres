@@ -414,6 +414,12 @@
   ifdef => 'DEBUG_NODE_TESTS_ENABLED',
 },
 
+{ name => 'debug_print_raw_parse', type => 'bool', context => 'PGC_USERSET', group => 'LOGGING_WHAT',
+  short_desc => 'Logs each query\'s raw parse tree.',
+  variable => 'Debug_print_raw_parse',
+  boot_val => 'false',
+},
+
 { name => 'debug_print_parse', type => 'bool', context => 'PGC_USERSET', group => 'LOGGING_WHAT',
   short_desc => 'Logs each query\'s parse tree.',
   variable => 'Debug_print_parse',
@@ -560,7 +566,7 @@
 { name => 'log_lock_waits', type => 'bool', context => 'PGC_SUSET', group => 'LOGGING_WHAT',
   short_desc => 'Logs long lock waits.',
   variable => 'log_lock_waits',
-  boot_val => 'false',
+  boot_val => 'true',
 },
 
 { name => 'log_lock_failures', type => 'bool', context => 'PGC_SUSET', group => 'LOGGING_WHAT',

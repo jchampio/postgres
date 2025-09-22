@@ -289,6 +289,13 @@ pgstat_detach_shmem(void)
  * ------------------------------------------------------------
  */
 
+/*
+ * Initialize entry newly-created.
+ *
+ * Returns NULL in the event of an allocation failure, so as callers can
+ * take cleanup actions as the entry initialized is already inserted in the
+ * shared hashtable.
+ */
 PgStatShared_Common *
 pgstat_init_entry(PgStat_Kind kind,
 				  PgStatShared_HashEntry *shhashent)
@@ -311,7 +318,12 @@ pgstat_init_entry(PgStat_Kind kind,
 	pg_atomic_init_u32(&shhashent->generation, 0);
 	shhashent->dropped = false;
 
-	chunk = dsa_allocate0(pgStatLocal.dsa, pgstat_get_kind_info(kind)->shared_size);
+	chunk = dsa_allocate_extended(pgStatLocal.dsa,
+								  pgstat_get_kind_info(kind)->shared_size,
+								  DSA_ALLOC_ZERO | DSA_ALLOC_NO_OOM);
+	if (chunk == InvalidDsaPointer)
+		return NULL;
+
 	shheader = dsa_get_address(pgStatLocal.dsa, chunk);
 	shheader->magic = 0xdeadbeef;
 
@@ -444,13 +456,10 @@ PgStat_EntryRef *
 pgstat_get_entry_ref(PgStat_Kind kind, Oid dboid, uint64 objid, bool create,
 					 bool *created_entry)
 {
-	PgStat_HashKey key;
+	PgStat_HashKey key = {0};
 	PgStatShared_HashEntry *shhashent;
 	PgStatShared_Common *shheader = NULL;
 	PgStat_EntryRef *entry_ref;
-
-	/* clear padding */
-	memset(&key, 0, sizeof(struct PgStat_HashKey));
 
 	key.kind = kind;
 	key.dboid = dboid;
@@ -509,6 +518,20 @@ pgstat_get_entry_ref(PgStat_Kind kind, Oid dboid, uint64 objid, bool create,
 		if (!shfound)
 		{
 			shheader = pgstat_init_entry(kind, shhashent);
+			if (shheader == NULL)
+			{
+				/*
+				 * Failed the allocation of a new entry, so clean up the
+				 * shared hashtable before giving up.
+				 */
+				dshash_delete_entry(pgStatLocal.shared_hash, shhashent);
+
+				ereport(ERROR,
+						(errcode(ERRCODE_OUT_OF_MEMORY),
+						 errmsg("out of memory"),
+						 errdetail("Failed while allocating entry %u/%u/%" PRIu64 ".",
+								   key.kind, key.dboid, key.objid)));
+			}
 			pgstat_acquire_entry_ref(entry_ref, shhashent, shheader);
 
 			if (created_entry != NULL)
@@ -962,12 +985,9 @@ pgstat_drop_database_and_contents(Oid dboid)
 bool
 pgstat_drop_entry(PgStat_Kind kind, Oid dboid, uint64 objid)
 {
-	PgStat_HashKey key;
+	PgStat_HashKey key = {0};
 	PgStatShared_HashEntry *shent;
 	bool		freed = true;
-
-	/* clear padding */
-	memset(&key, 0, sizeof(struct PgStat_HashKey));
 
 	key.kind = kind;
 	key.dboid = dboid;
