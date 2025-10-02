@@ -107,6 +107,27 @@ pkgconfig.generate(
   libraries_private: private_deps,
 )
 
+gen_libpqrc = executable('gen_libpqrc',
+  sources: files(
+    'gen_libpqrc.c',
+  ),
+  link_with: libpq_so,
+  dependencies: [frontend_no_fe_utils_code],
+)
+
+libpqrc = custom_target('libpqrc',
+  output: 'libpqrc',
+  command: [gen_libpqrc],
+  capture: true,
+  build_by_default: true,
+  install: true,
+  install_dir: dir_sysconf,
+  # XXX Rebuild when PQconninfoOptions changes.
+  # TODO: linking gen_libpqrc with libpq_st would be clearer, but doesn't
+  # work...
+  depend_files: files('fe-connect.c'),
+)
+
 install_headers(
   'libpq-fe.h',
   'libpq-events.h',

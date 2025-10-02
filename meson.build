@@ -3452,6 +3452,7 @@ installed_targets = [
   backend_targets,
   bin_targets,
   libpq_st,
+  libpqrc,
   pl_targets,
   contrib_targets,
   nls_mo_targets,
