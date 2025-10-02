@@ -303,7 +303,7 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"SSL-Client-Key", "", 64,
 	offsetof(struct pg_conn, sslkey)},
 
-	{"sslcertmode", "PGSSLCERTMODE", NULL, NULL,
+	{"sslcertmode", "PGSSLCERTMODE", DefaultSSLCertMode, NULL,
 		"SSL-Client-Cert-Mode", "", 8,	/* sizeof("disable") == 8 */
 	offsetof(struct pg_conn, sslcertmode)},
 
