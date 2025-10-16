@@ -981,9 +981,73 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 static bool
 use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 {
-	libpq_append_conn_error(conn,
-							"oauth_plugin is not implemented");
-	return false;
+	PQExpBufferData buf;
+	char	   *module_name = NULL;
+	bool		success = false;
+
+	PostgresPollingStatusType (*flow) (PGconn *conn);
+	void		(*cleanup) (PGconn *conn);
+
+	initPQExpBuffer(&buf);
+
+	/* Construct the path to our plugin. */
+	appendPQExpBufferStr(&buf, LIBDIR); /* XXX won't work for tests, just
+										 * macOS */
+	appendPQExpBufferStr(&buf, conn->oauth_plugin);
+	appendPQExpBufferStr(&buf, DLSUFFIX);
+
+	if (PQExpBufferDataBroken(buf))
+	{
+		libpq_append_conn_error(conn, "out of memory");
+		goto cleanup;
+	}
+
+	module_name = buf.data;
+
+	state->flow_handle = dlopen(module_name, RTLD_NOW | RTLD_LOCAL);
+	if (!state->flow_handle)
+	{
+		/*
+		 * As with use_builtin_flow, the actual error message is locked behind
+		 * PGOAUTHDEBUG because dlerror() isn't guaranteed to be threadsafe.
+		 */
+		if (oauth_unsafe_debugging_enabled())
+			fprintf(stderr, "failed dlopen for %s: %s\n", module_name, dlerror());
+
+		libpq_append_conn_error(conn, "failed to load flow plugin %s",
+								module_name);
+		goto cleanup;
+	}
+
+	if (						/* TODO: do we need an init function? */
+		(flow = dlsym(state->flow_handle, "pg_run_oauth_flow")) == NULL
+		|| (cleanup = dlsym(state->flow_handle, "pg_cleanup_oauth_flow")) == NULL)
+	{
+		if (oauth_unsafe_debugging_enabled())
+			fprintf(stderr, "failed dlsym for %s: %s\n", module_name, dlerror());
+
+		libpq_append_conn_error(conn, "failed to load flow plugin %s",
+								module_name);
+
+		dlclose(state->flow_handle);
+		goto cleanup;
+	}
+
+	/*
+	 * Past this point, we do not unload the module. It stays in the process
+	 * permanently.
+	 */
+
+	/* Set our asynchronous callbacks. */
+	conn->async_auth = flow;
+	conn->cleanup_async_auth = cleanup;
+
+	success = true;
+
+cleanup:
+	free(module_name);
+
+	return success;
 }
 
 #else
