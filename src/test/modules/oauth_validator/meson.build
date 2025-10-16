@@ -75,6 +75,7 @@ tests += {
     'tests': [
       't/001_server.pl',
       't/002_client.pl',
+      't/003_plugin.pl',
     ],
     'env': {
       'PYTHON': python.full_path(),

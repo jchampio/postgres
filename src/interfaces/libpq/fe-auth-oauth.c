@@ -991,8 +991,8 @@ use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 	initPQExpBuffer(&buf);
 
 	/* Construct the path to our plugin. */
-	appendPQExpBufferStr(&buf, LIBDIR); /* XXX won't work for tests, just
-										 * macOS */
+	appendPQExpBufferStr(&buf, LIBDIR "/"); /* XXX won't work for tests, just
+											 * macOS */
 	appendPQExpBufferStr(&buf, conn->oauth_plugin);
 	appendPQExpBufferStr(&buf, DLSUFFIX);
 
