@@ -863,8 +863,8 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 		"libpq-oauth-" PG_MAJORVERSION DLSUFFIX;
 #endif
 
-	state->builtin_flow = dlopen(module_name, RTLD_NOW | RTLD_LOCAL);
-	if (!state->builtin_flow)
+	state->flow_handle = dlopen(module_name, RTLD_NOW | RTLD_LOCAL);
+	if (!state->flow_handle)
 	{
 		/*
 		 * For end users, this probably isn't an error condition, it just
@@ -879,9 +879,9 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 		return false;
 	}
 
-	if ((init = dlsym(state->builtin_flow, "libpq_oauth_init")) == NULL
-		|| (flow = dlsym(state->builtin_flow, "pg_fe_run_oauth_flow")) == NULL
-		|| (cleanup = dlsym(state->builtin_flow, "pg_fe_cleanup_oauth_flow")) == NULL)
+	if ((init = dlsym(state->flow_handle, "libpq_oauth_init")) == NULL
+		|| (flow = dlsym(state->flow_handle, "pg_fe_run_oauth_flow")) == NULL
+		|| (cleanup = dlsym(state->flow_handle, "pg_fe_cleanup_oauth_flow")) == NULL)
 	{
 		/*
 		 * This is more of an error condition than the one above, but due to
@@ -890,7 +890,7 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 		if (oauth_unsafe_debugging_enabled())
 			fprintf(stderr, "failed dlsym for libpq-oauth: %s\n", dlerror());
 
-		dlclose(state->builtin_flow);
+		dlclose(state->flow_handle);
 		return false;
 	}
 

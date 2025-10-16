@@ -39,7 +39,7 @@ typedef struct
 	PGconn	   *conn;
 	void	   *async_ctx;
 
-	void	   *builtin_flow;
+	void	   *flow_handle;
 } fe_oauth_state;
 
 extern void pqClearOAuthToken(PGconn *conn);
