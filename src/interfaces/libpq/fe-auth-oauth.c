@@ -28,6 +28,9 @@
 #include "mb/pg_wchar.h"
 #include "pg_config_paths.h"
 
+static bool use_builtin_flow(PGconn *conn, fe_oauth_state *state);
+static bool use_plugin_flow(PGconn *conn, fe_oauth_state *state);
+
 /* The exported OAuth callback mechanism. */
 static void *oauth_init(PGconn *conn, const char *password,
 						const char *sasl_mechanism);
@@ -770,7 +773,7 @@ cleanup_user_oauth_flow(PGconn *conn)
  * This configuration doesn't support the builtin flow.
  */
 
-bool
+static bool
 use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 {
 	return false;
@@ -823,7 +826,7 @@ DEFINE_SETTER(char *, oauth_token);
  * not want to install it. Troubleshooting of linker/loader failures can be done
  * via PGOAUTHDEBUG.
  */
-bool
+static bool
 use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 {
 	static bool initialized = false;
@@ -950,7 +953,7 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 extern PostgresPollingStatusType pg_fe_run_oauth_flow(PGconn *conn);
 extern void pg_fe_cleanup_oauth_flow(PGconn *conn);
 
-bool
+static bool
 use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 {
 	/* Set our asynchronous callbacks. */
@@ -964,6 +967,39 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 
 
 /*
+ * Plugin Flow
+ *
+ * This is only supported with USE_DYNAMIC_OAUTH. (Static clients may link an
+ * alternative implementation for use_builtin_flow(), but it is only possible to
+ * choose one builtin flow.)
+ *
+ * TODO: maybe a static registration function, if people ask for this?
+ */
+
+#ifdef USE_DYNAMIC_OAUTH
+
+static bool
+use_plugin_flow(PGconn *conn, fe_oauth_state *state)
+{
+	libpq_append_conn_error(conn,
+							"oauth_plugin is not implemented");
+	return false;
+}
+
+#else
+
+static bool
+use_plugin_flow(PGconn *conn, fe_oauth_state *state)
+{
+	libpq_append_conn_error(conn,
+							"oauth_plugin is not supported by static builds of libpq");
+	return false;
+}
+
+#endif							/* USE_DYNAMIC_OAUTH */
+
+
+/*
  * Chooses an OAuth client flow for the connection, which will retrieve a Bearer
  * token for presentation to the server.
  *
@@ -972,12 +1008,13 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
  * if it has one cached for immediate use), or set up for a series of
  * asynchronous callbacks which will be managed by run_user_oauth_flow().
  *
- * If the default handler is used instead, a Device Authorization flow is used
- * for the connection if support has been compiled in. (See
- * fe-auth-oauth-curl.c for implementation details.)
+ * If no such handler is registered, and an oauth_plugin has been provided, its
+ * flow implementation is used. Otherwise, a Device Authorization flow is used
+ * for the connection if support has been compiled in. (See fe-auth-oauth-curl.c
+ * for implementation details.)
  *
- * If neither a custom handler nor the builtin flow is available, the connection
- * fails here.
+ * If neither a custom handler nor any flow is available, the connection fails
+ * here.
  */
 static bool
 setup_token_request(PGconn *conn, fe_oauth_state *state)
@@ -1033,6 +1070,17 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 	{
 		libpq_append_conn_error(conn, "user-defined OAuth flow failed");
 		goto fail;
+	}
+	else if (conn->oauth_plugin
+		/* We reserve the libpq-oauth name for the builtin flow. */
+			 && strcmp(conn->oauth_plugin, "libpq-oauth") != 0)
+	{
+		/* TODO reserve the whole prefix! */
+
+		if (!use_plugin_flow(conn, state))
+			goto fail;
+
+		/* TODO: support immediate token caching in the flow, like above? */
 	}
 	else if (!use_builtin_flow(conn, state))
 	{

@@ -436,6 +436,9 @@ struct pg_conn
 								 * connection that's used for queries */
 
 	/* OAuth v2 */
+	char	   *oauth_plugin;	/* name of the OAuth implementation plugin
+								 * TODO how do we bless these? No arbitrary
+								 * dlopen()s allowed. */
 	char	   *oauth_issuer;	/* token issuer/URL */
 	char	   *oauth_issuer_id;	/* token issuer identifier */
 	char	   *oauth_discovery_uri;	/* URI of the issuer's discovery

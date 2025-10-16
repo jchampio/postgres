@@ -139,6 +139,11 @@ static int	ldapServiceLookup(const char *purl, PQconninfoOption *options,
 #else
 #define DefaultGSSMode "disable"
 #endif
+#ifdef USE_LIBCURL
+#define DefaultOAuthPlugin "libpq-oauth"
+#else
+#define DefaultOAuthPlugin ""
+#endif
 
 /* ----------
  * Definition of the conninfo parameters and their fallback resources.
@@ -410,6 +415,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 	{"oauth_scope", NULL, NULL, NULL,
 		"OAuth-Scope", "", 15,
 	offsetof(struct pg_conn, oauth_scope)},
+
+	{"oauth_plugin", "PGOAUTHPLUGIN", DefaultOAuthPlugin, NULL,
+		"OAuth-Plugin", "", 15,
+	offsetof(struct pg_conn, oauth_plugin)},
 
 	{"sslkeylogfile", NULL, NULL, NULL,
 		"SSL-Key-Log-File", "D", 64,
