@@ -85,6 +85,16 @@ libpq = declare_dependency(
   include_directories: [include_directories('.')]
 )
 
+# normal plugins
+libpq_plugin_args = default_plugin_args + {
+  # TODO
+}
+
+# plugins that shouldn't be installed by default, as they're only for testing
+libpq_test_plugin_args = libpq_plugin_args + {
+  'install': false
+}
+
 private_deps = [
   frontend_stlib_code,
   libpq_deps,

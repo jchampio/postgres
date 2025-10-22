@@ -53,7 +53,7 @@ $ENV{PGOAUTHDEBUG} = "UNSAFE";
 #
 
 my $user = "test";
-my $base_connstr = $node->connstr() . " user=$user oauth_plugin=testflow";
+my $base_connstr = $node->connstr() . " user=$user oauth_plugin=flow";
 my $common_connstr =
   "$base_connstr oauth_issuer=$issuer oauth_client_id=myID";
 

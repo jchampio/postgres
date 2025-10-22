@@ -506,6 +506,7 @@ if not (dir_prefix_contains_pg or dir_lib_pkg.contains('pgsql') or dir_lib_pkg.c
 endif
 
 dir_pgxs = dir_lib_pkg / 'pgxs'
+dir_plugins = dir_lib_pkg / 'libpq'
 
 dir_include = get_option('includedir')
 
@@ -3087,6 +3088,11 @@ default_mod_args = default_lib_args + {
   'install_dir': dir_lib_pkg,
 }
 
+default_plugin_args = default_lib_args + {
+  'name_prefix': '',
+  'install_dir': dir_plugins,
+}
+
 default_bin_args = default_target_args + {
   'install_dir': dir_bin,
 }
@@ -3341,6 +3347,7 @@ backend_code = declare_dependency(
 # install these files only during test, not main install
 test_install_data = []
 test_install_libs = []
+test_install_plugins = []
 
 # src/backend/meson.build defines backend_mod_code used for extension
 # libraries.
@@ -3487,6 +3494,7 @@ install_test_files_args = [
   '--prefix', dir_prefix,
   '--install', contrib_data_dir, test_install_data,
   '--install', dir_lib_pkg, test_install_libs,
+  '--install', dir_plugins, test_install_plugins,
 ]
 run_target('install-test-files',
   command: [python] + install_test_files_args,

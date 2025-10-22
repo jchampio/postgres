@@ -48,6 +48,22 @@ magic_validator = shared_module('magic_validator',
 )
 test_install_libs += magic_validator
 
+flow_sources = files(
+  'flow.c',
+)
+
+if host_system == 'windows'
+  flow_sources += rc_lib_gen.process(win32ver_rc, extra_args: [
+    '--NAME', 'flow',
+    '--FILEDESC', 'flow - OAuth flow test plugin for libpq',])
+endif
+
+flow = shared_module('flow',
+  flow_sources,
+  kwargs: libpq_test_plugin_args,
+)
+test_install_plugins += flow
+
 oauth_hook_client_sources = files(
   'oauth_hook_client.c',
 )

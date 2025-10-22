@@ -32,9 +32,26 @@ subdir = src/test/modules/oauth_validator
 top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
+endif
+
+# Build and install the flow plugin separately; it interacts poorly with pgxs
+# and MODULES.
+
+all: flow$(DLSUFFIX)
+
+.PHONY: install-flow clean-flow installdirs-plugins
+install: install-flow
+clean distclean: clean-flow
+
+install-flow: flow$(DLSUFFIX) installdirs-plugins
+	$(INSTALL_SHLIB) $< '$(DESTDIR)$(pluginsdir)/'
+
+clean-flow:
+	rm -f flow.o flow$(DLSUFFIX)
+
+installdirs-plugins:
+	$(MKDIR_P) '$(DESTDIR)$(pluginsdir)'
 
 export PYTHON
 export with_libcurl
 export with_python
-
-endif
