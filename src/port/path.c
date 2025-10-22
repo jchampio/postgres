@@ -959,6 +959,18 @@ get_pkglib_path(const char *my_exec_path, char *ret_path)
 }
 
 /*
+ *  get_client_pkglib_path
+ *
+ *  Differs from get_pkglib_path in that we need the path to libpq, not the
+ *  executable.
+ */
+void
+get_client_pkglib_path(const char *my_lib_path, char *ret_path)
+{
+	make_relative_path(ret_path, PKGLIBDIR, LIBDIR, my_lib_path);
+}
+
+/*
  *	get_locale_path
  */
 void

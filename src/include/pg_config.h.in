@@ -75,6 +75,10 @@
 /* Define to 1 if you have the <crtdefs.h> header file. */
 #undef HAVE_CRTDEFS_H
 
+/* Define to 1 if you have the declaration of `dladdr', and to 0 if you don't.
+   */
+#undef HAVE_DECL_DLADDR
+
 /* Define to 1 if you have the declaration of `fdatasync', and to 0 if you
    don't. */
 #undef HAVE_DECL_FDATASYNC

@@ -978,9 +978,57 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state)
 
 #ifdef USE_DYNAMIC_OAUTH
 
+#if HAVE_DECL_DLADDR
+
+/*
+ * Performs a similar job to find_my_exec(), but for the libpq shared object
+ * file rather than the executable. (Finding the location of the executable that
+ * linked us in isn't helpful; we want to relocate based on the location of
+ * libpq itself.)
+ */
+static char *
+find_my_libpq(PGconn *conn)
+{
+	Dl_info		info;
+	char	   *path;
+
+	if (!dladdr(&pg_oauth_mech, &info))
+	{
+		/*
+		 * dlerror() is not set here; failure is simply "the address could not
+		 * be found in a shared object".
+		 */
+		libpq_append_conn_error(conn, "could not find path to libpq");
+		return NULL;
+	}
+
+	if (!is_absolute_path(info.dli_fname))
+	{
+		/* TODO how likely is this? */
+		libpq_append_conn_error(conn, "path to libpq (%s) is not absolute",
+								info.dli_fname);
+		return NULL;
+	}
+
+	path = strdup(info.dli_fname);
+	if (!path)
+	{
+		libpq_append_conn_error(conn, "out of memory");
+		return NULL;
+	}
+
+	return path;
+}
+
+#else
+#error find_my_libpq is not yet implemented on this platform
+#endif							/* HAVE_DECL_DLADDR */
+
 static bool
 use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 {
+	char	   *libpath = NULL;
+	char		pkglibdir[MAXPGPATH];
 	PQExpBufferData buf;
 	char	   *module_name = NULL;
 	bool		success = false;
@@ -988,13 +1036,17 @@ use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 	PostgresPollingStatusType (*flow) (PGconn *conn);
 	void		(*cleanup) (PGconn *conn);
 
-	initPQExpBuffer(&buf);
+	/* Find our pkglibdir, relocated relative to libpq. */
+	libpath = find_my_libpq(conn);
+	if (!libpath)
+		return false;			/* error message already set */
+
+	get_client_pkglib_path(libpath, pkglibdir);
 
 	/* Construct the path to our plugin. */
-	appendPQExpBufferStr(&buf, LIBDIR "/"); /* XXX won't work for tests, just
-											 * macOS */
-	appendPQExpBufferStr(&buf, conn->oauth_plugin);
-	appendPQExpBufferStr(&buf, DLSUFFIX);
+	initPQExpBuffer(&buf);
+	appendPQExpBuffer(&buf, "%s/libpq/%s" DLSUFFIX,
+					  pkglibdir, conn->oauth_plugin);
 
 	if (PQExpBufferDataBroken(buf))
 	{
@@ -1045,6 +1097,7 @@ use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 	success = true;
 
 cleanup:
+	free(libpath);
 	free(module_name);
 
 	return success;

@@ -1830,6 +1830,7 @@ AC_CHECK_DECLS(posix_fadvise, [], [], [#include <fcntl.h>])
 
 AC_CHECK_DECLS(fdatasync, [], [], [#include <unistd.h>])
 AC_CHECK_DECLS([strlcat, strlcpy, strnlen, strsep, timingsafe_bcmp])
+AC_CHECK_DECLS([dladdr], [], [], [#include <dlfcn.h>])
 
 # We can't use AC_CHECK_FUNCS to detect these functions, because it
 # won't handle deployment target restrictions on macOS

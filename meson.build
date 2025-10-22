@@ -2630,6 +2630,7 @@ endforeach
 
 decl_checks = [
   ['F_FULLFSYNC', 'fcntl.h'],
+  ['dladdr',  'dlfcn.h'],
   ['fdatasync', 'unistd.h'],
   ['posix_fadvise', 'fcntl.h'],
   ['strlcat', 'string.h'],
