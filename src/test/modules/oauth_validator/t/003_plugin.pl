@@ -59,6 +59,10 @@ my $common_connstr =
 
 $node->connect_ok(
 	$common_connstr,
-	"connect via plugin flow");
+	"connect via plugin flow",
+	log_like => [
+		qr/oauth_validator: token="flowtoken", role="$user"/,
+		qr/connection authenticated: identity="$user" method=oauth/,
+	]);
 
 done_testing();

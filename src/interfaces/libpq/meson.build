@@ -87,6 +87,7 @@ libpq = declare_dependency(
 
 # normal plugins
 libpq_plugin_args = default_plugin_args + {
+  'include_directories': [libpq_inc, postgres_inc],
   # TODO
 }
 

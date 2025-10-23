@@ -29,7 +29,8 @@
 #include "pg_config_paths.h"
 
 static bool use_builtin_flow(PGconn *conn, fe_oauth_state *state);
-static bool use_plugin_flow(PGconn *conn, fe_oauth_state *state);
+static bool use_plugin_flow(PGconn *conn, fe_oauth_state *state,
+							PGoauthBearerRequest *request);
 
 /* The exported OAuth callback mechanism. */
 static void *oauth_init(PGconn *conn, const char *password,
@@ -1024,17 +1025,23 @@ find_my_libpq(PGconn *conn)
 #error find_my_libpq is not yet implemented on this platform
 #endif							/* HAVE_DECL_DLADDR */
 
+/*
+ * Loads a flow plugin to use for asynchronous authentication.
+ *
+ * The lifetime of *request ends shortly after this call, so it must be copied
+ * to longer-lived storage.
+ */
 static bool
-use_plugin_flow(PGconn *conn, fe_oauth_state *state)
+use_plugin_flow(PGconn *conn, fe_oauth_state *state, PGoauthBearerRequest *request)
 {
+	bool		success = false;
 	char	   *libpath = NULL;
 	char		pkglibdir[MAXPGPATH];
 	PQExpBufferData buf;
 	char	   *module_name = NULL;
-	bool		success = false;
+	PGoauthBearerRequest *request_copy;
 
-	PostgresPollingStatusType (*flow) (PGconn *conn);
-	void		(*cleanup) (PGconn *conn);
+	bool		(*run_flow) (PGconn *conn, PGoauthBearerRequest *request);
 
 	/* Find our pkglibdir, relocated relative to libpq. */
 	libpath = find_my_libpq(conn);
@@ -1072,8 +1079,7 @@ use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 	}
 
 	if (						/* TODO: do we need an init function? */
-		(flow = dlsym(state->flow_handle, "pg_run_oauth_flow")) == NULL
-		|| (cleanup = dlsym(state->flow_handle, "pg_cleanup_oauth_flow")) == NULL)
+		(run_flow = dlsym(state->flow_handle, "pg_run_oauthbearer")) == NULL)
 	{
 		if (oauth_unsafe_debugging_enabled())
 			fprintf(stderr, "failed dlsym for %s: %s\n", module_name, dlerror());
@@ -1090,9 +1096,27 @@ use_plugin_flow(PGconn *conn, fe_oauth_state *state)
 	 * permanently.
 	 */
 
+	/*
+	 * Tell the plugin to set up the request.
+	 *
+	 * TODO: handle already-cached token?
+	 */
+	if (run_flow(conn, request) != 0)
+		goto cleanup;			/* TODO error message? */
+
+	request_copy = malloc(sizeof(*request_copy));
+	if (!request_copy)
+	{
+		libpq_append_conn_error(conn, "out of memory");
+		goto cleanup;
+	}
+
+	*request_copy = *request;
+
 	/* Set our asynchronous callbacks. */
-	conn->async_auth = flow;
-	conn->cleanup_async_auth = cleanup;
+	conn->async_auth = run_user_oauth_flow;
+	conn->cleanup_async_auth = cleanup_user_oauth_flow;
+	state->async_ctx = request_copy;
 
 	success = true;
 
@@ -1106,7 +1130,7 @@ cleanup:
 #else
 
 static bool
-use_plugin_flow(PGconn *conn, fe_oauth_state *state)
+use_plugin_flow(PGconn *conn, fe_oauth_state *state, PGoauthBearerRequest *request)
 {
 	libpq_append_conn_error(conn,
 							"oauth_plugin is not supported by static builds of libpq");
@@ -1194,7 +1218,7 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 	{
 		/* TODO reserve the whole prefix! */
 
-		if (!use_plugin_flow(conn, state))
+		if (!use_plugin_flow(conn, state, &request))
 			goto fail;
 
 		/* TODO: support immediate token caching in the flow, like above? */
