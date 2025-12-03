@@ -50,6 +50,7 @@ test_install_libs += magic_validator
 
 oauth_hook_client_sources = files(
   'oauth_hook_client.c',
+  'oauth_test_common.c',
 )
 
 if host_system == 'windows'
@@ -67,6 +68,19 @@ oauth_hook_client = executable('oauth_hook_client',
 )
 testprep_targets += oauth_hook_client
 
+oauth_flow = shared_module('oauth_flow',
+  files(
+    'oauth_flow.c',
+    'oauth_test_common.c',
+  ),
+  include_directories: [postgres_inc],
+  dependencies: [frontend_shlib_code, libpq],
+  kwargs: default_lib_args + {
+    'install': false,
+  },
+)
+testprep_targets += oauth_flow
+
 tests += {
   'name': 'oauth_validator',
   'sd': meson.current_source_dir(),
@@ -80,6 +94,7 @@ tests += {
       'PYTHON': python.full_path(),
       'with_libcurl': oauth_flow_supported ? 'yes' : 'no',
       'with_python': 'yes',
+      'flow_module_path': oauth_flow.full_path(),
     },
     'deps': [oauth_hook_client],
   },

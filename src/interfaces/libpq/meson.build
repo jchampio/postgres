@@ -147,6 +147,7 @@ pkgconfig.generate(
 install_headers(
   'libpq-fe.h',
   'libpq-events.h',
+  'libpq-oauth.h',
 )
 
 install_headers(

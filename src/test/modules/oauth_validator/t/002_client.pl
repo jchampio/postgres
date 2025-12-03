@@ -1,6 +1,6 @@
 #
 # Exercises the API for custom OAuth client flows, using the oauth_hook_client
-# test driver.
+# test driver and the oauth_flow custom plugin.
 #
 # Copyright (c) 2021-2026, PostgreSQL Global Development Group
 #
@@ -19,6 +19,10 @@ if (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\boauth\b/)
 	plan skip_all =>
 	  'Potentially unsafe test oauth not enabled in PG_TEST_EXTRA';
 }
+
+my $plugin_supported = (
+		 check_pg_config("#define HAVE_SYS_EVENT_H 1")
+	  or check_pg_config("#define HAVE_SYS_EPOLL_H 1"));
 
 #
 # Cluster Setup
@@ -72,6 +76,8 @@ sub test
 		$flags = $params{flags};
 	}
 
+	# First run the oauth_hook_client, which uses PQauthDataHook to insert a new
+	# OAuth flow.
 	my @cmd = ("oauth_hook_client", @{$flags}, $common_connstr);
 	note "running '" . join("' '", @cmd) . "'";
 
@@ -103,6 +109,37 @@ sub test
 		$node->log_check("$test_name: log matches",
 			$log_start, log_like => $params{log_like});
 	}
+
+  SKIP:
+	{
+		last SKIP if $params{hook_only};
+		skip "OAuth modules are not supported on this platform"
+		  unless $plugin_supported;
+
+		# Run the same test with psql itself, loading the oauth_flow.so module.
+		local $ENV{PGOAUTHMODULE} = $ENV{flow_module_path};
+
+		# Flags are passed to the module via OAUTH_TEST_FLAGS, with 0x01 as a
+		# separator.
+		local $ENV{OAUTH_TEST_FLAGS} = join("\x01", @{$flags});
+
+		if ($params{expect_success})
+		{
+			$node->connect_ok(
+				$common_connstr,
+				"[plugin flow] $test_name",
+				expected_stderr => $params{expected_stderr},
+				log_like => $params{log_like});
+		}
+		else
+		{
+			$node->connect_fails(
+				$common_connstr,
+				"[plugin flow] $test_name",
+				expected_stderr => $params{expected_stderr},
+				log_like => $params{log_like});
+		}
+	}
 }
 
 test(
@@ -119,6 +156,7 @@ test(
 # Make sure the v1 hook continues to work.
 test(
 	"v1 synchronous hook can provide a token",
+	hook_only => 1,    # plugins don't support API v1
 	flags => [
 		"-v1",
 		"--token" => "my-token-v1",
@@ -133,6 +171,7 @@ if ($ENV{with_libcurl} ne 'yes')
 	# libpq should help users out if no OAuth support is built in.
 	test(
 		"fails without custom hook installed",
+		hook_only => 1,    # plugins can't use --no-hook
 		flags => ["--no-hook"],
 		expected_stderr =>
 		  qr/no OAuth flows are available \(try installing the libpq-oauth package\)/
@@ -189,6 +228,7 @@ foreach my $c (@cases)
 	test(
 		"hook misbehavior: $c->{'flag'} (v1)",
 		flags => [ '-v1', $c->{'flag'} ],
+		hook_only => 1,    # plugins can't use -v1
 		expected_stderr => $c->{'expected_error'});
 }
 
@@ -201,5 +241,20 @@ test(
 	],
 	expected_stderr =>
 	  qr/user-defined OAuth flow failed: async error message/);
+
+SKIP:
+{
+	skip "OAuth modules are not supported on this platform"
+	  unless $plugin_supported;
+
+	# Make sure a misaimed PGOAUTHMODULE gives the correct error message.
+	local $ENV{PGOAUTHMODULE} = $node->basedir . '/nonexistent.so';
+
+	$node->connect_fails(
+		$common_connstr,
+		"PGOAUTHMODULE error messages",
+		expected_stderr =>
+		  qr/user-defined OAuth flow failed: plugin could not be loaded/);
+}
 
 done_testing();

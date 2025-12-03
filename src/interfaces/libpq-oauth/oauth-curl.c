@@ -29,8 +29,8 @@
 #endif
 
 #include "common/jsonapi.h"
+#include "libpq-oauth.h"
 #include "mb/pg_wchar.h"
-#include "oauth-curl.h"
 
 #ifdef USE_DYNAMIC_OAUTH
 

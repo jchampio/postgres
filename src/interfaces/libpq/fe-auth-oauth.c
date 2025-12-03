@@ -17,6 +17,8 @@
 
 #ifdef USE_DYNAMIC_OAUTH
 #include <dlfcn.h>
+#else
+#include "libpq-oauth.h"
 #endif
 
 #include "common/base64.h"
@@ -882,41 +884,68 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state, PGoauthBearerRequestV2 *re
 	 * On the other platforms, load the module using only the basename, to
 	 * rely on the runtime linker's standard search behavior.
 	 */
-	const char *const module_name =
+	const char *module_name =
 #if defined(__darwin__)
 		LIBDIR "/libpq-oauth" DLSUFFIX;
 #else
 		"libpq-oauth" DLSUFFIX;
 #endif
 
-	state->builtin_flow = dlopen(module_name, RTLD_NOW | RTLD_LOCAL);
-	if (!state->builtin_flow)
+	/*-
+	 * Additionally, the user may override the module path explicitly to be
+	 * able to provide their own module, via PGOAUTHMODULE.
+	 *
+	 * TODO: have to think about _all_ the security ramifications of this. What
+	 * existing protections in LD_LIBRARY_PATH (and/or SIP) are we potentially
+	 * bypassing? Should we check the permissions of the file somehow...?
+	 * TODO: maybe disallow anything not underneath LIBDIR? or PKGLIBDIR?
+	 * Should it have a naming convention?
+	 */
+	const char *env = getenv("PGOAUTHMODULE");
+
+	if (env && env[0])
+		module_name = env;
+	else
+		state->builtin = true;
+
+	state->flow_module = dlopen(module_name, RTLD_NOW | RTLD_LOCAL);
+	if (!state->flow_module)
 	{
 		/*
 		 * For end users, this probably isn't an error condition, it just
 		 * means the flow isn't installed. Developers and package maintainers
-		 * may want to debug this via the PGOAUTHDEBUG envvar, though.
+		 * may want to debug this via the PGOAUTHDEBUG envvar, though, and we
+		 * should be more noisy if users tried to provide a PGOAUTHMODULE.
 		 *
 		 * Note that POSIX dlerror() isn't guaranteed to be threadsafe.
 		 */
 		if (oauth_unsafe_debugging_enabled())
-			fprintf(stderr, "failed dlopen for libpq-oauth: %s\n", dlerror());
+			fprintf(stderr, "failed dlopen for %s: %s\n", module_name, dlerror());
 
-		return 0;
+		if (state->builtin)
+			return 0;
+
+		request->error = libpq_gettext("plugin could not be loaded");
+		return -1;
 	}
 
-	if ((init = dlsym(state->builtin_flow, "libpq_oauth_init")) == NULL
-		|| (start_flow = dlsym(state->builtin_flow, "pg_start_oauthbearer")) == NULL)
+	if ((start_flow = dlsym(state->flow_module, "pg_start_oauthbearer")) == NULL)
 	{
 		/*
 		 * This is more of an error condition than the one above, but due to
 		 * the dlerror() threadsafety issue, lock it behind PGOAUTHDEBUG too.
 		 */
 		if (oauth_unsafe_debugging_enabled())
-			fprintf(stderr, "failed dlsym for libpq-oauth: %s\n", dlerror());
+			fprintf(stderr, "failed dlsym for %s: %s\n", module_name, dlerror());
 
-		dlclose(state->builtin_flow);
-		return 0;
+		dlclose(state->flow_module);
+		state->flow_module = NULL;
+
+		if (state->builtin)
+			return 0;
+
+		request->error = libpq_gettext("plugin entry point could not be located");
+		return -1;
 	}
 
 	/*
@@ -925,34 +954,50 @@ use_builtin_flow(PGconn *conn, fe_oauth_state *state, PGoauthBearerRequestV2 *re
 	 */
 
 	/*
-	 * We need to inject necessary function pointers into the module. This
-	 * only needs to be done once -- even if the pointers are constant,
-	 * assigning them while another thread is executing the flows feels like
-	 * tempting fate.
+	 * Our libpq-oauth.so provides a special initialization function for libpq
+	 * integration. It's not a problem if we don't find this; it just means
+	 * that a user-defined module is being used.
 	 */
-	if ((lockerr = pthread_mutex_lock(&init_mutex)) != 0)
-	{
-		/* Should not happen... but don't continue if it does. */
-		Assert(false);
+	init = dlsym(state->flow_module, "libpq_oauth_init");
 
-		libpq_append_conn_error(conn, "failed to lock mutex (%d)", lockerr);
-		return 0;
-	}
-
-	if (!initialized)
+	if (!init)
+		state->builtin = false; /* adjust our error messages */
+	else
 	{
-		init(
+		/*
+		 * We need to inject necessary function pointers into the module. This
+		 * only needs to be done once -- even if the pointers are constant,
+		 * assigning them while another thread is executing the flows feels
+		 * like tempting fate.
+		 */
+		if ((lockerr = pthread_mutex_lock(&init_mutex)) != 0)
+		{
+			/* Should not happen... but don't continue if it does. */
+			Assert(false);
+
+			appendPQExpBuffer(&conn->errorMessage,
+							  "use_builtin_flow: failed to lock mutex (%d)\n",
+							  lockerr);
+
+			request->error = "";	/* satisfy report_flow_error() */
+			return -1;
+		}
+
+		if (!initialized)
+		{
+			init(
 #ifdef ENABLE_NLS
-			 libpq_gettext
+				 libpq_gettext
 #else
-			 NULL
+				 NULL
 #endif
-			);
+				);
 
-		initialized = true;
+			initialized = true;
+		}
+
+		pthread_mutex_unlock(&init_mutex);
 	}
-
-	pthread_mutex_unlock(&init_mutex);
 
 	return (start_flow(conn, request) == 0) ? 1 : -1;
 }
@@ -969,6 +1014,7 @@ extern int	pg_start_oauthbearer(PGconn *conn, PGoauthBearerRequestV2 *request);
 static int
 use_builtin_flow(PGconn *conn, fe_oauth_state *state, PGoauthBearerRequestV2 *request)
 {
+	state->builtin = true;
 	return (pg_start_oauthbearer(conn, request) == 0) ? 1 : -1;
 }
 
@@ -1022,10 +1068,7 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 		poison_req_v2(&request, false);
 	}
 	if (res == 0)
-	{
-		state->builtin = true;
 		res = use_builtin_flow(conn, state, &request);
-	}
 
 	if (res > 0)
 	{
@@ -1062,19 +1105,18 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 		conn->async_auth = run_oauth_flow;
 		conn->cleanup_async_auth = cleanup_oauth_flow;
 		state->async_ctx = request_copy;
-	}
-	else if (res < 0)
-	{
-		report_flow_error(conn, &request);
-		goto fail;
-	}
-	else
-	{
-		libpq_append_conn_error(conn, "no OAuth flows are available (try installing the libpq-oauth package)");
-		goto fail;
+
+		return true;
 	}
 
-	return true;
+	/*
+	 * Failure cases: either we tried to set up a flow and failed, or there
+	 * was no flow to try.
+	 */
+	if (res < 0)
+		report_flow_error(conn, &request);
+	else
+		libpq_append_conn_error(conn, "no OAuth flows are available (try installing the libpq-oauth package)");
 
 fail:
 	do_cleanup(state, &request);

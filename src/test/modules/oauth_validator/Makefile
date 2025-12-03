@@ -14,10 +14,12 @@ PGFILEDESC = "validator - test OAuth validator module"
 
 PROGRAM = oauth_hook_client
 PGAPPICON = win32
-OBJS = $(WIN32RES) oauth_hook_client.o
+OBJS = $(WIN32RES) oauth_hook_client.o oauth_test_common.o
 
 PG_CPPFLAGS = -I$(libpq_srcdir)
 PG_LIBS_INTERNAL += $(libpq_pgport)
+
+EXTRA_CLEAN = oauth_flow$(DLSUFFIX) oauth_flow.o
 
 NO_INSTALLCHECK = 1
 
@@ -33,8 +35,14 @@ top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 
+all: oauth_flow$(DLSUFFIX)
+
+oauth_flow$(DLSUFFIX): oauth_flow.o oauth_test_common.o
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) $(libpq_pgport_shlib) $(LDFLAGS_SL) -shared -o $@
+
 export PYTHON
 export with_libcurl
 export with_python
+export flow_module_path := $(abs_top_builddir)/$(subdir)/oauth_flow$(DLSUFFIX)
 
 endif
