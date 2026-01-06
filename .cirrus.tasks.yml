@@ -316,8 +316,11 @@ task:
           -Dnls=enabled
           -Dpam=enabled
 
+      do_stuff_script:
+        - perl -mIPC::Run -e 'print "$IPC::Run::VERSION\n";'
+
       setup_additional_packages_script: |
-        #pkgin -y install ...
+        exit 1
       <<: *netbsd_task_template
 
     - name: OpenBSD - Meson
