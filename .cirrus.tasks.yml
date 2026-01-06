@@ -798,8 +798,17 @@ task:
   depends_on: SanityCheck
   only_if: $CI_WINDOWS_ENABLED
 
+  do_stuff_script:
+    - where perl
+    - perl --version
+    - perl -mIPC::Run -e 'print "$IPC::Run::VERSION\n";'
+    - C:\msys64\usr\bin\bash.exe -lc 'where perl'
+    - C:\msys64\usr\bin\bash.exe -lc 'perl --version'
+    - C:\msys64\usr\bin\bash.exe -lc 'perl -mIPC::Run -e \'print "$IPC::Run::VERSION\n";\''
+
   setup_additional_packages_script: |
     REM choco install -y --no-progress ...
+    fail here now
 
   setup_hosts_file_script: |
     echo 127.0.0.1 pg-loadbalancetest >> c:\Windows\System32\Drivers\etc\hosts
