@@ -79,24 +79,29 @@ sub test
 	# First run the oauth_hook_client, which uses PQauthDataHook to insert a new
 	# OAuth flow.
 	my @cmd = ("oauth_hook_client", @{$flags}, $common_connstr);
-	note "running '" . join("' '", @cmd) . "'";
 
-	my $log_start = -s $node->logfile;
-	my ($stdout, $stderr) = run_command(\@cmd);
+	my $expected_ret;
+	my $expected_out = [];
+	my $expected_err = [qr/^$/];    # check for empty stderr by default
 
 	if ($params{expect_success})
 	{
-		like($stdout, qr/connection succeeded/, "$test_name: stdout matches");
+		$expected_ret = 0;
+		$expected_out = [qr/connection succeeded/];
+	}
+	else
+	{
+		$expected_ret = 1;
 	}
 
 	if (defined($params{expected_stderr}))
 	{
-		like($stderr, $params{expected_stderr}, "$test_name: stderr matches");
+		$expected_err = [ $params{expected_stderr} ];
 	}
-	else
-	{
-		is($stderr, "", "$test_name: no stderr");
-	}
+
+	my $log_start = -s $node->logfile;
+	command_checks_all(\@cmd, $expected_ret, $expected_out, $expected_err,
+		"$test_name:");
 
 	if (defined($params{log_like}))
 	{
