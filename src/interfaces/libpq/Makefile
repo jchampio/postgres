@@ -29,6 +29,12 @@ ifneq ($(PORTNAME), win32)
 override CFLAGS += $(PTHREAD_CFLAGS)
 endif
 
+ifeq ($(PORTNAME),darwin)
+# TODO staticlib too...
+override LDFLAGS += -Wl,-U,___asan_poison_memory_region
+override LDFLAGS += -Wl,-U,___asan_unpoison_memory_region
+endif
+
 OBJS = \
 	$(WIN32RES) \
 	fe-auth-scram.o \

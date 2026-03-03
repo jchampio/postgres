@@ -49,6 +49,15 @@ libpq_c_args = ['-DSO_MAJOR_VERSION=5']
 # The OAuth implementation differs depending on the type of library being built.
 libpq_so_c_args = ['-DUSE_DYNAMIC_OAUTH']
 
+libpq_link_args = []
+if host_system == 'darwin'
+  # TODO staticlib too...
+  libpq_link_args += [
+    '-Wl,-U,___asan_poison_memory_region',
+    '-Wl,-U,___asan_unpoison_memory_region',
+  ]
+endif
+
 # Not using both_libraries() here as
 # 1) resource files should only be in the shared library
 # 2) we want the .pc file to include a dependency to {pgport,common}_static for
@@ -81,7 +90,10 @@ libpq_so = shared_library('libpq',
   darwin_versions: ['5', '5.' + pg_version_major.to_string()],
   dependencies: [frontend_shlib_code, libpq_deps],
   link_depends: export_file,
-  link_args: export_fmt.format(export_file.full_path()),
+  link_args: [
+    export_fmt.format(export_file.full_path()),
+    libpq_link_args,
+  ],
   kwargs: default_lib_args,
 )
 libpq_targets += libpq_so

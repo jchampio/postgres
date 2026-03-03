@@ -27,6 +27,11 @@
 #include "fe-auth-oauth.h"
 #include "mb/pg_wchar.h"
 #include "pg_config_paths.h"
+#include "utils/memdebug.h"
+
+static int	do_async(fe_oauth_state *state, PGoauthBearerRequestV2 *request);
+static void do_cleanup(fe_oauth_state *state, PGoauthBearerRequestV2 *request);
+static void poison_req_v2(PGoauthBearerRequestV2 *request, bool poison);
 
 /* The exported OAuth callback mechanism. */
 static void *oauth_init(PGconn *conn, const char *password,
@@ -741,9 +746,7 @@ run_oauth_flow(PGconn *conn)
 		return PGRES_POLLING_FAILED;
 	}
 
-	status = request->v1.async(conn,
-							   (PGoauthBearerRequest *) request,
-							   &conn->altsock);
+	status = do_async(state, request);
 
 	if (status == PGRES_POLLING_FAILED)
 	{
@@ -804,8 +807,7 @@ cleanup_oauth_flow(PGconn *conn)
 
 	Assert(request);
 
-	if (request->v1.cleanup)
-		request->v1.cleanup(conn, (PGoauthBearerRequest *) request);
+	do_cleanup(state, request);
 	conn->altsock = PGINVALID_SOCKET;
 
 	free(request);
@@ -1011,7 +1013,14 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 	 */
 	res = PQauthDataHook(PQAUTHDATA_OAUTH_BEARER_TOKEN_V2, conn, &request);
 	if (res == 0)
+	{
+		poison_req_v2(&request, true);
+
 		res = PQauthDataHook(PQAUTHDATA_OAUTH_BEARER_TOKEN, conn, &request);
+		state->v1 = (res != 0);
+
+		poison_req_v2(&request, false);
+	}
 	if (res == 0)
 	{
 		state->builtin = true;
@@ -1037,8 +1046,7 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 			}
 
 			/* short-circuit */
-			if (request.v1.cleanup)
-				request.v1.cleanup(conn, (PGoauthBearerRequest *) &request);
+			do_cleanup(state, &request);
 			return true;
 		}
 
@@ -1069,8 +1077,7 @@ setup_token_request(PGconn *conn, fe_oauth_state *state)
 	return true;
 
 fail:
-	if (request.v1.cleanup)
-		request.v1.cleanup(conn, (PGoauthBearerRequest *) &request);
+	do_cleanup(state, &request);
 	return false;
 }
 
@@ -1420,4 +1427,124 @@ oauth_unsafe_debugging_enabled(void)
 	const char *env = getenv("PGOAUTHDEBUG");
 
 	return (env && strcmp(env, "UNSAFE") == 0);
+}
+
+/*
+ * Hook v1 Poisoning
+ *
+ * Try to catch misuses of the v1 PQAUTHDATA_OAUTH_BEARER_TOKEN hook and its
+ * callbacks, which are not allowed to downcast their request argument to
+ * PGoauthBearerRequestV2. (Such clients may crash or worse when speaking to
+ * libpq 18.)
+ *
+ * This attempts to use Valgrind and AddressSanitizer hooks, if present, to mark
+ * the extra members as inaccessible. For uninstrumented builds, it also munges
+ * request->issuer to try to crash clients that perform string operations, and
+ * it aborts if request->error is set.
+ */
+
+#if defined(__has_attribute) && __has_attribute(weak)
+void		__asan_poison_memory_region(void const volatile *addr, size_t size) __attribute__((weak));
+void		__asan_unpoison_memory_region(void const volatile *addr, size_t size) __attribute__((weak));
+#else
+static void (*const __asan_poison_memory_region) (void const volatile *addr, size_t size) = NULL;
+static void (*const __asan_unpoison_memory_region) (void const volatile *addr, size_t size) = NULL;
+#endif
+
+#define MASK_BITS ((uintptr_t) 0x55aa55aa55aa55aa)
+#define POISON_MASK(ptr) ((void *) (((uintptr_t) ptr) ^ MASK_BITS))
+
+/*
+ * Workhorse for v2 request poisoning. This must be called exactly twice: once
+ * to poison, once to unpoison.
+ *
+ * NB: Unpoisoning must restore the request to its original state, because we
+ * might still switch back to a v2 implementation internally. Don't do anything
+ * destructive during the poison operation.
+ */
+static void
+poison_req_v2(PGoauthBearerRequestV2 *request, bool poison)
+{
+	void	   *const base = (char *) request + sizeof(request->v1);
+	const size_t len = sizeof(*request) - sizeof(request->v1);
+
+	if (poison)
+	{
+		/* Poison request->issuer with a mask to help uninstrumented builds. */
+		request->issuer = POISON_MASK(request->issuer);
+
+		VALGRIND_MAKE_MEM_NOACCESS(base, len);
+		if (__asan_poison_memory_region)
+			__asan_poison_memory_region(base, len);
+	}
+	else
+	{
+		/*
+		 * XXX Using DEFINED here is technically too lax; we might catch
+		 * struct padding in the blast radius. But since this API has to
+		 * poison stack addresses, and Valgrind can't track/manage undefined
+		 * stack regions, we can't be any stricter without tracking the
+		 * original state of the memory.
+		 */
+		VALGRIND_MAKE_MEM_DEFINED(base, len);
+		if (__asan_unpoison_memory_region)
+			__asan_unpoison_memory_region(base, len);
+
+		/* Undo our mask. */
+		request->issuer = POISON_MASK(request->issuer);
+
+		/*
+		 * For uninstrumented builds, make sure request->error wasn't touched.
+		 */
+		if (request->error)
+		{
+			fprintf(stderr,
+					"abort! out-of-bounds write to PGoauthBearerRequest by PQAUTHDATA_OAUTH_BEARER_TOKEN hook\n");
+			abort();
+		}
+	}
+}
+
+/*
+ * Wrapper around PGoauthBearerRequest.async() which applies poison during the
+ * callback when necessary.
+ */
+static int
+do_async(fe_oauth_state *state, PGoauthBearerRequestV2 *request)
+{
+	PGconn	   *conn = state->conn;
+	int			ret;
+
+	Assert(request->v1.async);
+
+	if (state->v1)
+		poison_req_v2(request, true);
+
+	ret = request->v1.async(conn,
+							(PGoauthBearerRequest *) request,
+							&conn->altsock);
+
+	if (state->v1)
+		poison_req_v2(request, false);
+
+	return ret;
+}
+
+/*
+ * Similar wrapper for the optional PGoauthBearerRequest.cleanup() callback.
+ * Does nothing if one is not defined.
+ */
+static void
+do_cleanup(fe_oauth_state *state, PGoauthBearerRequestV2 *request)
+{
+	if (!request->v1.cleanup)
+		return;
+
+	if (state->v1)
+		poison_req_v2(request, true);
+
+	request->v1.cleanup(state->conn, (PGoauthBearerRequest *) request);
+
+	if (state->v1)
+		poison_req_v2(request, false);
 }
