@@ -119,6 +119,14 @@ env:
   # commit-message directive parsed in the `setup` job below.
   CI_OS_ONLY_JOBS: "linux macos windows mingw compilerwarnings sanitycheck"
 
+  # Version of IPC::Run to request from CPAN.
+  #
+  # Pin to NJM/IPC-Run-20250809.0 because TODDR/IPC-Run-20260322.0 broke
+  # postgres tap tests on Windows (changed pipe stdio handling). See upstream
+  # pg-vm-images commit ff5238afa3 and the thread at
+  #   https://postgr.es/m/CAN55FZ06xanSbJdHe-CurjX_qNuBWZDEvS1kAk36L38YCtZXnw%40mail.gmail.com
+  IPC_RUN_VERSION: NJM/IPC-Run-20250809.0.tar.gz
+
   ###
   # A few variables to make expressions later on shorter
   ###
@@ -889,6 +897,8 @@ jobs:
       PG_TEST_USE_UNIX_SOCKETS: 1
       PG_REGRESS_SOCK_DIR: ${{ github.workspace }}/pgsock
       TAR: "c:/windows/system32/tar.exe"
+      CPAN_CACHE_DIRS: |
+        C:\Strawberry\perl\site
 
       MESON_FEATURES: >-
         -Dauto_features=disabled
@@ -987,10 +997,49 @@ jobs:
           # Make bison and flex visible
           echo C:/msys64/usr/bin >> "$GITHUB_PATH"
 
-          # Don't prefer mingw's perl
+          # Don't prefer mingw's perl. Note that this works only because we just
+          # put /usr/bin on the path above -- otherwise, mingw bash would just
+          # immediately override this with its own PATH prefix.
           echo C:/Strawberry/perl/bin >> "$GITHUB_PATH"
 
-      - name: Install dependencies
+      - &windows_perl_cache_key_step
+        name: Compute Perl version cache key
+        shell: bash
+        id: perlkey
+        run: |
+          # Rebuild the CPAN cache whenever `perl -V` changes.
+          perl_hash=$(perl -V | md5sum | cut -f1 -d ' ')
+          echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
+
+          # Print some breadcrumbs, for troubleshooting.
+          which perl
+          perl -e 'print "version: $^V\n";'
+          echo "hash: ${perl_hash}"
+          echo '::group::perl -V'
+          perl -V
+          echo ::endgroup::
+
+      - &windows_cpan_restore_step
+        name: Restore CPAN cache
+        id: cpan_restore
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CPAN_CACHE_DIRS }}
+          key: cpan-${{ github.job }}-${{ steps.perlkey.outputs.key }}-${{ env.IPC_RUN_VERSION }}
+
+      # On a cache miss, install CPAN modules.
+      - &windows_cpan_install_step
+        name: Install CPAN dependencies
+        if: steps.cpan_restore.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Install IPC::Run.
+          # - recommends_policy=0 keeps cpan from pulling in IO::Tty / IO::Pty,
+          #   which don't build on Windows ("This module requires a POSIX
+          #   compliant system to work").
+          (echo; echo o conf recommends_policy 0; echo notest install ${{ env.IPC_RUN_VERSION }}) | cpan
+
+      - name: Install additional dependencies
         shell: pwsh
         run: |
           # meson is not preinstalled, at least on windows-2022. Install via
@@ -1000,21 +1049,25 @@ jobs:
           if (!$?) { throw 'cmdfail' }
           echo ::endgroup::
 
-          # Install IPC::Run.
-          # - recommends_policy=0 keeps cpan from pulling in IO::Tty / IO::Pty,
-          #   which don't build on Windows ("This module requires a POSIX
-          #   compliant system to work").
-          # - Pin to NJM/IPC-Run-20250809.0 because TODDR/IPC-Run-20260322.0
-          #   broke postgres tap tests on Windows (changed pipe stdio
-          #   handling). See upstream pg-vm-images commit ff5238afa3 and
-          #   the thread at
-          #   https://postgr.es/m/CAN55FZ06xanSbJdHe-CurjX_qNuBWZDEvS1kAk36L38YCtZXnw%40mail.gmail.com
-          echo ::group::cpan_ipc_run
-          "o conf recommends_policy 0`no conf commit`nnotest install NJM/IPC-Run-20250809.0.tar.gz" | cpan
-          if (!$?) { throw 'cmdfail' }
-          perl -mIPC::Run -e 1
+          # Always check that IPC::Run works in our standard shell before saving
+          # the cache.
+          echo ::group::check_ipc_run
+          perl -mIPC::Run -e 'print "$IPC::Run::VERSION\n";'
           if (!$?) { throw 'cmdfail' }
           echo ::endgroup::
+
+      # Save a new CPAN cache only if necessary.
+      #
+      # Note: since this runs in a matrix, only one of the concurrent cache
+      # saves will succeed. This doesn't appear to have any negative effect, but
+      # if one appears in the future, we can run this on the first slice only.
+      - &windows_cpan_save_step
+        name: Save CPAN cache
+        if: steps.cpan_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CPAN_CACHE_DIRS }}
+          key: ${{ steps.cpan_restore.outputs.cache-primary-key }}
 
       - &window_setup_hosts_step
         name: Setup hosts file
@@ -1080,6 +1133,8 @@ jobs:
       PG_TEST_USE_UNIX_SOCKETS: 1
       PG_REGRESS_SOCK_DIR: ${{ github.workspace }}/pgsock
       TAR: "c:/windows/system32/tar.exe"
+      CPAN_CACHE_DIRS: |
+        D:\a\postgres\postgres\msys64\ucrt64\lib\perl5\site_perl
 
       MSYS: winjitdebug
       CHERE_INVOKING: 1
@@ -1140,17 +1195,34 @@ jobs:
             zlib:p
             zstd:p
 
+      # When using `shell: bash`, make sure we use our MSYS2 installation of
+      # Perl instead of the Git for Windows installation. (This mirrors the
+      # Strawberry Perl adjustment for MSVC, above.)
+      - name: Adjust PATH for MinGW Perl
+        run: |
+          # XXX First put the Git for Windows /usr/bin on the PATH, then prefix
+          # that with the path to the MSYS2 Perl we just installed. This keeps
+          # the Git Bash shell from adding its own utilities to the PATH in
+          # preference. (The MSYS2 installation, on the other hand, will add its
+          # own PATH prefix whenever we use its shell.)
+          echo C:/msys64/usr/bin >> "$GITHUB_PATH"
+          cygpath -w "$(dirname "$(which perl)")" >> "$GITHUB_PATH"
+
       - *nix_sysinfo_step
+
+      - *windows_perl_cache_key_step
+      - *windows_cpan_restore_step
+      - *windows_cpan_install_step
 
       - name: Install additional dependencies
         run: |
-          # Pin IPC::Run to NJM/IPC-Run-20250809.0; TODDR/IPC-Run-20260322.0
-          # broke postgres tap tests on Windows (pipe stdio handling).
-          # See pg-vm-images commit ff5238afa3.
-          echo ::group::cpan_ipc_run
-          (echo; echo o conf recommends_policy 0; echo notest install NJM/IPC-Run-20250809.0.tar.gz) | cpan
-          perl -mIPC::Run -e 1
+          # Always check that IPC::Run works in our standard shell before saving
+          # the cache.
+          echo ::group::check_ipc_run
+          perl -mIPC::Run -e 'print "$IPC::Run::VERSION\n";'
           echo ::endgroup::
+
+      - *windows_cpan_save_step
 
       - name: Setup socket directory
         shell: cmd
