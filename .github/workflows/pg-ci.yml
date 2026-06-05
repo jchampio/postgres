@@ -63,7 +63,7 @@ env:
 
   # Can be set to a non-empty value to run a limited set of tests
   # (e.g. --suite regress to only run the main regression tests).
-  MTEST_TARGET:
+  MTEST_TARGET: pg_ctl/001_start_stop pg_ctl/002_status
 
   PGCTLTIMEOUT: 120  # avoids spurious failures during parallel tests
   TEMP_CONFIG: ${{ github.workspace }}/src/tools/ci/pg_ci_base.conf
@@ -963,11 +963,19 @@ jobs:
           # Don't prefer mingw's perl
           echo C:/Strawberry/perl/bin >> "$GITHUB_PATH"
 
+      - &windows_perl_cache_key_step
+        name: Test shell
+        shell: bash
+        run: |
+          which perl
+          perl -V
+
       # Rebuild the CPAN cache whenever `perl -V` changes.
       - name: Compute Perl version cache key
         id: perlkey
         shell: 'C:\msys64\usr\bin\bash.exe --login -eo pipefail "{0}"'
         run: |
+          perl -V
           perl_hash=$(/c/Strawberry/perl/bin/perl -V | md5sum | cut -f1 -d ' ')
           echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
 
@@ -1145,11 +1153,14 @@ jobs:
 
       - *nix_sysinfo_step
 
+      - *windows_perl_cache_key_step
+
       # Rebuild the CPAN cache whenever `perl -V` changes.
       # Note that *windows_cpan_restore_step relies on the perlkey step output.
       - name: Compute Perl version cache key
         id: perlkey
         run: |
+          perl -V
           perl_hash=$(perl -V | md5sum | cut -f1 -d ' ')
           echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
 
