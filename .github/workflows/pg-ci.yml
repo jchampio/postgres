@@ -966,9 +966,10 @@ jobs:
       - &windows_perl_cache_key_step
         name: Test shell
         shell: bash
-        run: |
+        run: &windows_perl_cache_key_cmd |
           which perl
           perl -V
+          perl -V | md5sum
 
       # Rebuild the CPAN cache whenever `perl -V` changes.
       - name: Compute Perl version cache key
@@ -1151,9 +1152,13 @@ jobs:
             ${MINGW_PACKAGE_PREFIX}-zlib \
             ${MINGW_PACKAGE_PREFIX}-zstd
 
+          # Make the above visible to other shells
+          echo D:/msys64/bin >> "$GITHUB_PATH"
+
       - *nix_sysinfo_step
 
-      - *windows_perl_cache_key_step
+      - name: Test shell
+        run: *windows_perl_cache_key_cmd
 
       # Rebuild the CPAN cache whenever `perl -V` changes.
       # Note that *windows_cpan_restore_step relies on the perlkey step output.
