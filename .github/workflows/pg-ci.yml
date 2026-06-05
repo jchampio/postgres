@@ -963,22 +963,21 @@ jobs:
           # Don't prefer mingw's perl
           echo C:/Strawberry/perl/bin >> "$GITHUB_PATH"
 
-      - &windows_perl_cache_key_step
-        name: Test shell
-        shell: bash
-        run: &windows_perl_cache_key_cmd |
-          which perl
-          perl -V
-          perl -V | md5sum
-
       # Rebuild the CPAN cache whenever `perl -V` changes.
       - name: Compute Perl version cache key
-        id: perlkey
-        shell: 'C:\msys64\usr\bin\bash.exe --login -eo pipefail "{0}"'
-        run: |
-          perl -V
-          perl_hash=$(/c/Strawberry/perl/bin/perl -V | md5sum | cut -f1 -d ' ')
+        shell: bash
+        id: &windows_perl_cache_step_id perlkey
+        run: &windows_perl_cache_key_cmd |
+          perl_hash=$(perl -V | md5sum | cut -f1 -d ' ')
           echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
+
+          # Print some breadcrumbs, for troubleshooting.
+          which perl
+          perl -e 'print "$^V\n";'
+          echo "hash: ${perl_hash}"
+          echo '::group::perl -V'
+          perl -V
+          echo ::endgroup::
 
       - &windows_cpan_restore_step
         name: Restore CPAN cache
@@ -1154,17 +1153,10 @@ jobs:
 
       - *nix_sysinfo_step
 
-      - name: Test shell
-        run: *windows_perl_cache_key_cmd
-
       # Rebuild the CPAN cache whenever `perl -V` changes.
-      # Note that *windows_cpan_restore_step relies on the perlkey step output.
       - name: Compute Perl version cache key
-        id: perlkey
-        run: |
-          perl -V
-          perl_hash=$(perl -V | md5sum | cut -f1 -d ' ')
-          echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
+        id: *windows_perl_cache_step_id
+        run: *windows_perl_cache_key_cmd
 
       - *windows_cpan_restore_step
 
