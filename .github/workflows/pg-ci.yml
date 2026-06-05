@@ -992,6 +992,8 @@ jobs:
         shell: pwsh
         if: steps.cpan_restore.outputs.cache-hit != 'true'
         run: |
+          which perl
+
           # Install IPC::Run.
           # - recommends_policy=0 keeps cpan from pulling in IO::Tty / IO::Pty,
           #   which don't build on Windows ("This module requires a POSIX
@@ -1164,6 +1166,7 @@ jobs:
       - name: Install CPAN dependencies
         if: steps.cpan_restore.outputs.cache-hit != 'true'
         run: |
+          which perl
           (echo; echo o conf recommends_policy 0; echo notest install ${{ env.IPC_RUN_VERSION }}) | cpan
 
       - name: Install additional dependencies
