@@ -973,6 +973,7 @@ jobs:
           echo "path=$(which perl)" >> "$GITHUB_OUTPUT"
 
           # Print some breadcrumbs, for troubleshooting.
+          echo "$PATH"
           which perl
           perl -e 'print "$^V\n";'
           echo "hash: ${perl_hash}"
@@ -1160,10 +1161,15 @@ jobs:
             ${MINGW_PACKAGE_PREFIX}-zlib \
             ${MINGW_PACKAGE_PREFIX}-zstd
 
+          # XXX ?
+          echo D:/msys64/bin >> "$GITHUB_PATH"
+          echo D:/msys64/usr/bin >> "$GITHUB_PATH"
+
       - *nix_sysinfo_step
 
       # Rebuild the CPAN cache whenever `perl -V` changes.
       - name: Compute Perl version cache key
+        shell: bash
         id: *windows_perl_cache_step_id
         run: *windows_perl_cache_key_cmd
 
