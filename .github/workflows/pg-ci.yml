@@ -970,6 +970,7 @@ jobs:
         run: &windows_perl_cache_key_cmd |
           perl_hash=$(perl -V | md5sum | cut -f1 -d ' ')
           echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
+          echo "path=$(which perl)" >> "$GITHUB_OUTPUT"
 
           # Print some breadcrumbs, for troubleshooting.
           which perl
@@ -992,7 +993,13 @@ jobs:
         shell: pwsh
         if: steps.cpan_restore.outputs.cache-hit != 'true'
         run: |
-          which perl
+          # There are at least three Perl installations to juggle here. Make
+          # sure the current one matches our intended cache key.
+          $path = which perl | Out-String -NoNewline
+          if ($path -ne '${{ steps.perlkey.outputs.path }}') {
+            echo "wrong perl: $path"
+            throw 'cmdfail'
+          }
 
           # Install IPC::Run.
           # - recommends_policy=0 keeps cpan from pulling in IO::Tty / IO::Pty,
@@ -1166,7 +1173,7 @@ jobs:
       - name: Install CPAN dependencies
         if: steps.cpan_restore.outputs.cache-hit != 'true'
         run: |
-          which perl
+          test "$(which perl)" = "${{ steps.perlkey.outputs.path }}"
           (echo; echo o conf recommends_policy 0; echo notest install ${{ env.IPC_RUN_VERSION }}) | cpan
 
       - name: Install additional dependencies
