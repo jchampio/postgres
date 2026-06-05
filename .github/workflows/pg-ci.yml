@@ -1152,9 +1152,6 @@ jobs:
             ${MINGW_PACKAGE_PREFIX}-zlib \
             ${MINGW_PACKAGE_PREFIX}-zstd
 
-          # Make the above visible to other shells
-          echo D:/msys64/bin >> "$GITHUB_PATH"
-
       - *nix_sysinfo_step
 
       - name: Test shell
