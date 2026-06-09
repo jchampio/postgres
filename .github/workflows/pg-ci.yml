@@ -957,11 +957,20 @@ jobs:
           pacman -S --noconfirm --needed --asdeps \
             bison flex
 
+          which echo
+          echo C:/msys64/usr/bin
+          echo D:/msys64/usr/bin
+          echo C:/Strawberry/perl/bin
+
           # Make bison and flex visible
           echo C:/msys64/usr/bin >> "$GITHUB_PATH"
 
+          echo C:/Strawberry/perl/bin
+
           # Don't prefer mingw's perl
           echo C:/Strawberry/perl/bin >> "$GITHUB_PATH"
+          echo ' ---'
+          cat "$GITHUB_PATH"
 
       # Rebuild the CPAN cache whenever `perl -V` changes.
       - name: Compute Perl version cache key
@@ -1161,9 +1170,14 @@ jobs:
             ${MINGW_PACKAGE_PREFIX}-zlib \
             ${MINGW_PACKAGE_PREFIX}-zstd
 
+          which echo
+          echo C:/msys64/bin
+          echo D:/msys64/bin
+          echo D:/msys64/ucrt64/bin
+          echo C:/Strawberry/perl/bin
+
           # XXX ?
-          echo D:/msys64/bin >> "$GITHUB_PATH"
-          echo D:/msys64/usr/bin >> "$GITHUB_PATH"
+          echo D:/msys64/ucrt64/bin >> "$GITHUB_PATH"
 
       - *nix_sysinfo_step
 
@@ -1179,6 +1193,7 @@ jobs:
       - name: Install CPAN dependencies
         if: steps.cpan_restore.outputs.cache-hit != 'true'
         run: |
+          which perl
           test "$(which perl)" = "${{ steps.perlkey.outputs.path }}"
           (echo; echo o conf recommends_policy 0; echo notest install ${{ env.IPC_RUN_VERSION }}) | cpan
 
