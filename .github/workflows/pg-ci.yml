@@ -40,14 +40,6 @@ env:
   # concurrent jobs and retrying older runs have a chance of working.
   CLONE_DEPTH: 500
 
-  # At the moment all jobs use 4vcore runners, and none seems to benefit from
-  # increasing concurrency further.
-  BUILD_JOBS: 4
-
-  # It's possible that some jobs benefit from an increased test concurrency,
-  # but a default of 4 is a safe bet. Individual jobs can override.
-  TEST_JOBS: 4
-
   CCACHE_MAXSIZE: "250M"
   CCACHE_DIR: ${{ github.workspace }}/ccache_dir
 
@@ -114,21 +106,26 @@ env:
     --with-uuid=ossp
     --with-zstd
 
-  # Centrally define the version of linux runners, to make it easier to
-  # update. We don't just want to use ubuntu-latest, as it's not implausible
-  # there will be breakage when that switches to the next ubuntu version.
-  _LINUX_RUNS_ON: &linux_runs_on |
-    ubuntu-24.04
-
   # Debian Trixie containers used by all Linux jobs. Built by
   # 'https://github.com/anarazel/pg-vm-images/'.
+  #
+  # The containers are named
+  # ghcr.io/anarazel/pg-vm-images/<branch>/linux_debian_ci/<debian version>/<ci-job>:latest
   CONTAINER_REPO: ghcr.io/anarazel/pg-vm-images/main
-  CONTAINER_LINUX_CI: linux_debian_trixie_ci:latest
-  CONTAINER_LINUX_CI_DOCS: linux_debian_trixie_ci_docs:latest
+  CONTAINER_LINUX_CI_NAME: linux_debian_ci/trixie
+  CONTAINER_TAG: latest
 
   # The full set of OS / job selectors recognized by the `ci-os-only:`
   # commit-message directive parsed in the `setup` job below.
   CI_OS_ONLY_JOBS: "linux macos windows mingw compilerwarnings sanitycheck"
+
+  # Version of IPC::Run to request from CPAN.
+  #
+  # Pin to NJM/IPC-Run-20250809.0 because TODDR/IPC-Run-20260322.0 broke
+  # postgres tap tests on Windows (changed pipe stdio handling). See upstream
+  # pg-vm-images commit ff5238afa3 and the thread at
+  #   https://postgr.es/m/CAN55FZ06xanSbJdHe-CurjX_qNuBWZDEvS1kAk36L38YCtZXnw%40mail.gmail.com
+  IPC_RUN_VERSION: NJM/IPC-Run-20250809.0.tar.gz
 
   ###
   # A few variables to make expressions later on shorter
@@ -162,7 +159,8 @@ jobs:
   warn-if-not-opted-in:
     name: Report if not opted into CI
     if: ${{vars.PG_CI_ENABLED != '1'}}
-    runs-on: ubuntu-slim
+    # See the setup task for an explanation
+    runs-on: ${{ case(vars.pg_ci_runs_on_setup != '', vars.pg_ci_runs_on_setup, 'ubuntu-slim') }}
     steps:
       - name: Warn
         env:
@@ -192,20 +190,42 @@ jobs:
     # Only run CI if repo owner opted in. If this task is skipped due to the
     # if, none of it's depending tasks (i.e. the actual CI tasks) run either.
     if: ${{vars.PG_CI_ENABLED == '1'}}
-    runs-on: *linux_runs_on
     timeout-minutes: 1
     outputs:
+      # Are certain tasks enabled?
       linux: ${{ steps.os.outputs.linux }}
       macos: ${{ steps.os.outputs.macos }}
       windows: ${{ steps.os.outputs.windows }}
       mingw: ${{ steps.os.outputs.mingw }}
       compilerwarnings: ${{ steps.os.outputs.compilerwarnings }}
       sanitycheck: ${{ steps.os.outputs.sanitycheck }}
+
+      # What runners to run on:
+      #
+      # To allow over-riding what runners jobs use, we allow setting
+      # repository / org level variables influencing that choice on a
+      # per-host-operating-system basis.  See also src/tools/ci/README
+      #
+      # This also makes it easier to change the version of linux / windows
+      # used centrally. We don't just want to use ubuntu-latest, as it's not
+      # implausible there will be breakage when that switches to the next
+      # ubuntu version.
+      runs_on_linux: ${{ case(vars.PG_CI_RUNS_ON_LINUX != '', vars.PG_CI_RUNS_ON_LINUX, 'ubuntu-24.04') }}
+      runs_on_windows: ${{ case(vars.PG_CI_RUNS_ON_WINDOWS != '', vars.PG_CI_RUNS_ON_WINDOWS, 'windows-2022') }}
+      runs_on_macos: ${{ case(vars.PG_CI_RUNS_ON_MACOS != '', vars.PG_CI_RUNS_ON_MACOS, 'macos-15') }}
+      # runs_on_setup: an output can't be used as the input of the setup job
+      # itself, so it's done inline below.
+
+      # Exports:
+      #
       # Re-export workflow-level env vars that other jobs need to reference
       # from contexts (e.g. `jobs.<id>.container.image`) where the `env`
       # context is not available.
-      container_linux_ci: ${{ env.CONTAINER_REPO }}/${{ env.CONTAINER_LINUX_CI }}
-      container_linux_ci_docs: ${{ env.CONTAINER_REPO }}/${{ env.CONTAINER_LINUX_CI_DOCS }}
+      container_linux_ci_base: ${{ env.CONTAINER_REPO }}/${{ env.CONTAINER_LINUX_CI_NAME }}
+      container_tag: ${{ env.CONTAINER_TAG }}
+
+    # Can't use the output from above, so repeated verbatim here
+    runs-on: ${{ case(vars.pg_ci_runs_on_setup != '', vars.pg_ci_runs_on_setup, 'ubuntu-slim') }}
 
     steps:
       # Anchor reused by other jobs further down. GitHub Actions supports YAML
@@ -215,10 +235,19 @@ jobs:
       - &nix_sysinfo_step
         name: sysinfo
         run: |
-          id
-          uname -a
+          echo -n "Number of cores: "
+          nproc 2> /dev/null || sysctl hw.physicalcpu hw.logicalcpu
+
+          echo "id: $(id)"
+          echo "uname: $(uname -a)"
+
+          echo ::group::ulimit
           ulimit -a -H && ulimit -a -S
+          echo ::endgroup::
+
+          echo ::group::env
           env
+          echo ::endgroup::
 
       - name: Parse ci-os-only
         id: os
@@ -257,10 +286,10 @@ jobs:
     if: |
       !cancelled() &&
       needs.setup.outputs.sanitycheck == 'true'
-    runs-on: *linux_runs_on
+    runs-on: ${{ needs.setup.outputs.runs_on_linux }}
     timeout-minutes: 15
-    container: &linux_ci_container
-      image: ${{ needs.setup.outputs.container_linux_ci }}
+    container:
+      image: ${{ needs.setup.outputs.container_linux_ci_base }}/sanity-check:${{ needs.setup.outputs.container_tag }}
 
       # Options passed to all linux containers. Not all of the jobs need
       # all of them, but it's easier to just define them centrally.
@@ -352,7 +381,7 @@ jobs:
       - name: Build
         shell: *su_postgres_shell
         run: &ninja_build_cmd |
-          ninja -C build -j${{env.BUILD_JOBS}} ${{env.MBUILD_TARGET}}
+          ninja -C build ${{env.MBUILD_TARGET}}
           ninja -C build -t missingdeps
 
       # Decide if it's worth uploading a new version of the ccache cache. If
@@ -405,7 +434,7 @@ jobs:
           meson test ${{env.MTEST_ARGS}} --suite setup --logbase setup || exit 1
           echo ::endgroup::
 
-          meson test ${{env.MTEST_ARGS}} --num-processes ${{env.TEST_JOBS}} --no-suite setup ${{env.MTEST_TARGET}}
+          meson test ${{env.MTEST_ARGS}} --no-suite setup ${{env.MTEST_TARGET}}
 
       - &linux_collect_cores_step
         name: Core backtraces
@@ -445,8 +474,10 @@ jobs:
       !cancelled() &&
       needs.setup.outputs.linux == 'true' &&
       needs.sanity-check.result != 'failure'
-    runs-on: *linux_runs_on
-    container: *linux_ci_container
+    runs-on: ${{ needs.setup.outputs.runs_on_linux }}
+    container:
+      image: ${{ needs.setup.outputs.container_linux_ci_base }}/linux-autoconf:${{ needs.setup.outputs.container_tag }}
+      options: *linux_container_options
     timeout-minutes: 60
 
     env: &linux_env
@@ -511,7 +542,7 @@ jobs:
       - name: Build
         shell: *su_postgres_shell
         run: |
-          make -s -j${BUILD_JOBS} world-bin
+          make -s -j$(nproc) world-bin
 
       - *ccache_decide_save_step
       - *ccache_save_step
@@ -519,7 +550,7 @@ jobs:
       - name: Test world
         shell: *su_postgres_shell
         run: |
-          make -s ${CHECK} ${CHECKFLAGS} -j${TEST_JOBS}
+          make -s ${CHECK} ${CHECKFLAGS} -j$(nproc)
 
       - *linux_collect_cores_step
       - *upload_logs_step
@@ -539,8 +570,10 @@ jobs:
     name: Linux - Meson (32-bit)
     needs: [setup, sanity-check]
     if: *linux_job_if
-    runs-on: *linux_runs_on
-    container: *linux_ci_container
+    runs-on: ${{ needs.setup.outputs.runs_on_linux }}
+    container:
+      image: ${{ needs.setup.outputs.container_linux_ci_base }}/linux-meson-32:${{ needs.setup.outputs.container_tag }}
+      options: *linux_container_options
     timeout-minutes: 60
     env: *linux_env
 
@@ -611,7 +644,7 @@ jobs:
           build/tmp_install/usr/local/pgsql/bin/pg_ctl -c -o '-c fsync=off' -D build/runningcheck -l build/testrun/runningcheck.log start
 
           # Run the tests supporting running against an already running
-          meson test ${{env.MTEST_ARGS}} --num-processes ${{env.TEST_JOBS}} --setup running
+          meson test ${{env.MTEST_ARGS}} --setup running
 
           build/tmp_install/usr/local/pgsql/bin/pg_ctl -D build/runningcheck stop
 
@@ -631,8 +664,10 @@ jobs:
     name: Linux - Meson (64-bit)
     needs: [setup, sanity-check]
     if: *linux_job_if
-    runs-on: *linux_runs_on
-    container: *linux_ci_container
+    runs-on: ${{ needs.setup.outputs.runs_on_linux }}
+    container:
+      image: ${{ needs.setup.outputs.container_linux_ci_base }}/linux-meson-64:${{ needs.setup.outputs.container_tag }}
+      options: *linux_container_options
     timeout-minutes: 60
     env: *linux_env
 
@@ -687,7 +722,7 @@ jobs:
       !cancelled() &&
       needs.setup.outputs.macos == 'true' &&
       needs.sanity-check.result != 'failure'
-    runs-on: macos-15
+    runs-on: ${{ needs.setup.outputs.runs_on_macos }}
     timeout-minutes: 60
     env:
       MACPORTS_CACHE: ${{ github.workspace }}/macports-cache
@@ -844,7 +879,7 @@ jobs:
       !cancelled() &&
       needs.setup.outputs.windows == 'true' &&
       needs.sanity-check.result != 'failure'
-    runs-on: windows-2022
+    runs-on: ${{ needs.setup.outputs.runs_on_windows }}
     timeout-minutes: 60
 
     # As described at the top of the task, split the tests across two runners
@@ -860,8 +895,10 @@ jobs:
     env:
       # Avoid port conflicts between concurrent tap tests
       PG_TEST_USE_UNIX_SOCKETS: 1
-      PG_REGRESS_SOCK_DIR: 'd:\pgsock'
+      PG_REGRESS_SOCK_DIR: ${{ github.workspace }}/pgsock
       TAR: "c:/windows/system32/tar.exe"
+      CPAN_CACHE_DIRS: |
+        C:\Strawberry\perl\site
 
       MESON_FEATURES: >-
         -Dauto_features=disabled
@@ -893,9 +930,19 @@ jobs:
 
       - name: Sysinfo
         run: |
+          echo Number of cores:
+          bash -c nproc
+
+          echo codepage:
           chcp
+
+          echo ::group::systeminfo
           systeminfo
+          echo ::endgroup::
+
+          echo ::group::env
           set
+          echo ::endgroup::
 
       # The TAP tests build an initdb template under build/tmp_install and
       # then `robocopy` it into per-test data directories. Robocopy with the
@@ -950,33 +997,77 @@ jobs:
           # Make bison and flex visible
           echo C:/msys64/usr/bin >> "$GITHUB_PATH"
 
-          # Don't prefer mingw's perl
+          # Don't prefer mingw's perl. Note that this works only because we just
+          # put /usr/bin on the path above -- otherwise, mingw bash would just
+          # immediately override this with its own PATH prefix.
           echo C:/Strawberry/perl/bin >> "$GITHUB_PATH"
 
-      - name: Install dependencies
+      - &windows_perl_cache_key_step
+        name: Compute Perl version cache key
+        shell: bash
+        id: perlkey
+        run: |
+          # Rebuild the CPAN cache whenever `perl -V` changes.
+          perl_hash=$(perl -V | md5sum | cut -f1 -d ' ')
+          echo "key=perl${perl_hash}" >> "$GITHUB_OUTPUT"
+
+          # Print some breadcrumbs, for troubleshooting.
+          which perl
+          perl -e 'print "version: $^V\n";'
+          echo "hash: ${perl_hash}"
+          echo '::group::perl -V'
+          perl -V
+          echo ::endgroup::
+
+      - &windows_cpan_restore_step
+        name: Restore CPAN cache
+        id: cpan_restore
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CPAN_CACHE_DIRS }}
+          key: cpan-${{ github.job }}-${{ steps.perlkey.outputs.key }}-${{ env.IPC_RUN_VERSION }}
+
+      # On a cache miss, install CPAN modules.
+      - &windows_cpan_install_step
+        name: Install CPAN dependencies
+        if: steps.cpan_restore.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Install IPC::Run.
+          # - recommends_policy=0 keeps cpan from pulling in IO::Tty / IO::Pty,
+          #   which don't build on Windows ("This module requires a POSIX
+          #   compliant system to work").
+          (echo; echo o conf recommends_policy 0; echo notest install ${{ env.IPC_RUN_VERSION }}) | cpan
+
+      - name: Install additional dependencies
         shell: pwsh
         run: |
-          # meson is not preinstalled on windows-2022. Install via pip
+          # meson is not preinstalled, at least on windows-2022. Install via
+          # pip
           echo ::group::pip
           python -m pip install --upgrade meson
           if (!$?) { throw 'cmdfail' }
           echo ::endgroup::
 
-          # Install IPC::Run.
-          # - recommends_policy=0 keeps cpan from pulling in IO::Tty / IO::Pty,
-          #   which don't build on Windows ("This module requires a POSIX
-          #   compliant system to work").
-          # - Pin to NJM/IPC-Run-20250809.0 because TODDR/IPC-Run-20260322.0
-          #   broke postgres tap tests on Windows (changed pipe stdio
-          #   handling). See upstream pg-vm-images commit ff5238afa3 and
-          #   the thread at
-          #   https://postgr.es/m/CAN55FZ06xanSbJdHe-CurjX_qNuBWZDEvS1kAk36L38YCtZXnw%40mail.gmail.com
-          echo ::group::cpan_ipc_run
-          "o conf recommends_policy 0`no conf commit`nnotest install NJM/IPC-Run-20250809.0.tar.gz" | cpan
-          if (!$?) { throw 'cmdfail' }
-          perl -mIPC::Run -e 1
+          # Always check that IPC::Run works in our standard shell before saving
+          # the cache.
+          echo ::group::check_ipc_run
+          perl -mIPC::Run -e 'print "$IPC::Run::VERSION\n";'
           if (!$?) { throw 'cmdfail' }
           echo ::endgroup::
+
+      # Save a new CPAN cache only if necessary.
+      #
+      # Note: since this runs in a matrix, only one of the concurrent cache
+      # saves will succeed. This doesn't appear to have any negative effect, but
+      # if one appears in the future, we can run this on the first slice only.
+      - &windows_cpan_save_step
+        name: Save CPAN cache
+        if: steps.cpan_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CPAN_CACHE_DIRS }}
+          key: ${{ steps.cpan_restore.outputs.cache-primary-key }}
 
       - &window_setup_hosts_step
         name: Setup hosts file
@@ -988,7 +1079,12 @@ jobs:
 
       - name: Setup socket directory
         shell: cmd
-        run: mkdir ${{env.PG_REGRESS_SOCK_DIR}}
+        run: mkdir "${{env.PG_REGRESS_SOCK_DIR}}"
+
+      - &windows_setup_debugger_step
+        name: Setup Windows debugger
+        shell: pwsh
+        run: src/tools/ci/gha_setup_windows_debugger.ps1
 
       - name: Configure
         run: |
@@ -1019,9 +1115,6 @@ jobs:
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
         run: *meson_test_world_cmd
 
-      # TODO: We need to collect crashlogs but for them to be generated, we'd
-      # have to configure the JIT Debugger to do so. cdb.exe is installed on
-      # the runner so that is possible.
       - *upload_logs_step
 
 
@@ -1033,17 +1126,18 @@ jobs:
       !cancelled() &&
       needs.setup.outputs.mingw == 'true' &&
       needs.sanity-check.result != 'failure'
-    runs-on: windows-2022
+    runs-on: ${{ needs.setup.outputs.runs_on_windows }}
     timeout-minutes: 60
     env:
       # Avoid port conflicts between concurrent tap tests
       PG_TEST_USE_UNIX_SOCKETS: 1
-      PG_REGRESS_SOCK_DIR: 'd:\pgsock'
+      PG_REGRESS_SOCK_DIR: ${{ github.workspace }}/pgsock
       TAR: "c:/windows/system32/tar.exe"
+      CPAN_CACHE_DIRS: |
+        D:\a\postgres\postgres\msys64\ucrt64\lib\perl5\site_perl
 
       MSYS: winjitdebug
       CHERE_INVOKING: 1
-      MSYSTEM: UCRT64
 
       # Keep -Dnls explicitly disabled, as the number of files it creates
       # causes a noticeable slowdown.
@@ -1056,65 +1150,83 @@ jobs:
 
     defaults:
       run:
-        shell: 'D:\msys64\usr\bin\bash.exe --login -eo pipefail "{0}"'
+        shell: msys2 {0}
 
     steps:
       - *windows_disable_defender_step
       - *window_setup_hosts_step
       - *checkout_step
 
-      # Relocate the preinstalled MSYS2 tree from C:\ (slow system disk) to
-      # D:\ (faster ephemeral data disk). Every subsequent MSYS2 step uses
-      # D:\msys64\usr\bin\bash.exe via the job's `defaults.run.shell`.
+      # The pre-existing msys install is on C:\, often a rather slow system
+      # disk, whereas the workspace is often on a faster, ephemeral disk.
+      # Using the pre-existing msys would often increase the total runtime of
+      # this task by ~15 minutes.
       #
-      # This reduces the total runtime of this task by ~15 minutes.
-      #
-      # robocopy returns 0-7 on success (with various "files copied" bits
-      # set) and 8+ on real failure, so we have to translate its exit code.
-      - name: Relocate MSYS2 to D
-        shell: pwsh
-        run: |
-          robocopy C:\msys64 D:\msys64 /E /NJS /NJH /NFL /NDL /NP
-          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
-          exit 0
+      # Instead we use msys2/setup-msys2 to set up our own install. That's
+      # faster than moving the install from C:\, and also works when the
+      # workspace is not on a separate disk.
+      - name: Install MSYS2
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.31.1
+        with:
+          msystem: UCRT64
+          # We don't want using an msys bash to "hide" all the other already
+          # installed tools, that would require us to install tools into msys
+          # that are already available otherwise.
+          path-type: inherit
+          update: true
+          location: ${{github.workspace}}
+          install: >-
+            bison flex
+          # name:p means MINGW_PACKAGE_PREFIX-only
+          pacboy: >-
+            ccache:p
+            gcc:p
+            icu:p
+            libxml2:p
+            libxslt:p
+            lz4:p
+            make:p
+            meson:p
+            perl:p
+            pkgconf:p
+            readline:p
+            zlib:p
+            zstd:p
 
-      - name: Setup MSYS2
+      # When using `shell: bash`, make sure we use our MSYS2 installation of
+      # Perl instead of the Git for Windows installation. (This mirrors the
+      # Strawberry Perl adjustment for MSVC, above.)
+      - name: Adjust PATH for MinGW Perl
         run: |
-          # ${MINGW_PACKAGE_PREFIX} is an environment variable used in the
-          # MSYS2. It dynamically expands to the correct prefix for the active
-          # shell environment.
-          pacman -S --noconfirm --needed  --asdeps \
-            git bison flex diffutils \
-            ${MINGW_PACKAGE_PREFIX}-ccache \
-            ${MINGW_PACKAGE_PREFIX}-gcc \
-            ${MINGW_PACKAGE_PREFIX}-icu \
-            ${MINGW_PACKAGE_PREFIX}-libbacktrace \
-            ${MINGW_PACKAGE_PREFIX}-libxml2 \
-            ${MINGW_PACKAGE_PREFIX}-libxslt \
-            ${MINGW_PACKAGE_PREFIX}-lz4 \
-            ${MINGW_PACKAGE_PREFIX}-make \
-            ${MINGW_PACKAGE_PREFIX}-meson \
-            ${MINGW_PACKAGE_PREFIX}-perl \
-            ${MINGW_PACKAGE_PREFIX}-pkgconf \
-            ${MINGW_PACKAGE_PREFIX}-readline \
-            ${MINGW_PACKAGE_PREFIX}-zlib \
-            ${MINGW_PACKAGE_PREFIX}-zstd
+          # XXX First put the Git for Windows /usr/bin on the PATH, then prefix
+          # that with the path to the MSYS2 Perl we just installed. This keeps
+          # the Git Bash shell from adding its own utilities to the PATH in
+          # preference. (The MSYS2 installation, on the other hand, will add its
+          # own PATH prefix whenever we use its shell.)
+          echo C:/msys64/usr/bin >> "$GITHUB_PATH"
+          cygpath -w "$(dirname "$(which perl)")" >> "$GITHUB_PATH"
 
       - *nix_sysinfo_step
 
+      - *windows_perl_cache_key_step
+      - *windows_cpan_restore_step
+      - *windows_cpan_install_step
+
       - name: Install additional dependencies
         run: |
-          # Pin IPC::Run to NJM/IPC-Run-20250809.0; TODDR/IPC-Run-20260322.0
-          # broke postgres tap tests on Windows (pipe stdio handling).
-          # See pg-vm-images commit ff5238afa3.
-          echo ::group::cpan_ipc_run
-          (echo; echo o conf recommends_policy 0; echo notest install NJM/IPC-Run-20250809.0.tar.gz) | cpan
-          perl -mIPC::Run -e 1
+          # Always check that IPC::Run works in our standard shell before saving
+          # the cache.
+          echo ::group::check_ipc_run
+          perl -mIPC::Run -e 'print "$IPC::Run::VERSION\n";'
           echo ::endgroup::
+
+      - *windows_cpan_save_step
 
       - name: Setup socket directory
         shell: cmd
-        run: mkdir ${{env.PG_REGRESS_SOCK_DIR}}
+        run: mkdir "${{env.PG_REGRESS_SOCK_DIR}}"
+
+      - *windows_setup_debugger_step
 
       - *ccache_restore_default_step
       - *ccache_restore_branch_step
@@ -1123,7 +1235,7 @@ jobs:
         run: |
           meson setup \
             ${{env.MESON_COMMON_PG_CONFIG_ARGS}} \
-            -Ddebug=true -Doptimization=g -Db_pch=true \
+            -Db_pch=true \
             ${{env.MESON_COMMON_FEATURES}} \
             ${{env.MESON_FEATURES}} \
             -DTAR=${{env.TAR}} \
@@ -1138,9 +1250,6 @@ jobs:
       - name: Test world
         run: *meson_test_world_cmd
 
-      # TODO: We want to include crashlogs, but they are not yet
-      # collected. cdb.exe is installed on the runner, so we can configure it
-      # appropriately.
       - *upload_logs_step
 
 
@@ -1161,15 +1270,18 @@ jobs:
       !cancelled() &&
       needs.setup.outputs.compilerwarnings == 'true' &&
       needs.sanity-check.result != 'failure'
-    runs-on: *linux_runs_on
+    runs-on: ${{ needs.setup.outputs.runs_on_linux }}
     timeout-minutes: 60
     container:
-      image: ${{ needs.setup.outputs.container_linux_ci_docs }}
+      image: ${{ needs.setup.outputs.container_linux_ci_base }}/compiler-warnings:${{ needs.setup.outputs.container_tag }}
+      options: *linux_container_options
     env:
       # Use larger ccache cache as this job compiles with multiple
       # compilers / flag combinations.
       CCACHE_MAXSIZE: "1G"
       DEFAULT_BUILD: world-bin
+      CCACHE_SLOPPINESS: pch_defines,time_macros
+      CCACHE_DEPEND: 1
 
     steps:
       - *nix_sysinfo_step
@@ -1185,53 +1297,56 @@ jobs:
       - name: gcc warnings + (dtrace)
         if: ${{ !cancelled() }}
         env:
-          CONF: ${{env.LINUX_CONFIGURE_FEATURES}} --cache gcc.cache --enable-dtrace
+          CONF: ${{env.MESON_COMMON_FEATURES}} -Ddtrace=enabled
           CC: ccache gcc
           CXX: ccache g++
           CLANG: ccache clang
         run: &compiler_warnings_cmd |
           echo "::group::configure"
-          ./configure \
-            ${{env.CONF}} \
-            CLANG="ccache clang"
+          rm -rf build-meson
+          meson setup -Dwerror=true $CONF build-meson
           echo "::endgroup::"
 
-          make -s -j${{env.BUILD_JOBS}} clean
-          make -s -j${{env.BUILD_JOBS}} ${{env.DEFAULT_BUILD}}
+          ninja -C build-meson --quiet ${{env.MBUILD_TARGET}}
 
       # gcc, cassert on, dtrace off
       - name: gcc warnings + (cassert)
         if: ${{ !cancelled() }}
         env:
-          CONF: ${{env.LINUX_CONFIGURE_FEATURES}} --cache gcc.cache --enable-cassert
+          CONF: ${{env.MESON_COMMON_FEATURES}} -Dcassert=true
           CC: ccache gcc
           CXX: ccache g++
+          CLANG: ccache clang
         run: *compiler_warnings_cmd
 
       # clang, cassert off, dtrace off
       - name: clang warnings
         if: ${{ !cancelled() }}
         env:
-          CONF: ${{env.LINUX_CONFIGURE_FEATURES}} --cache clang.cache
+          CONF: ${{env.MESON_COMMON_FEATURES}}
           CC: ccache clang
           CXX: ccache clang++
+          CLANG: ccache clang
         run: *compiler_warnings_cmd
 
       # clang, cassert on, dtrace on
       - name: clang warnings + (cassert + dtrace)
         if: ${{ !cancelled() }}
         env:
-          CONF: ${{env.LINUX_CONFIGURE_FEATURES}} --cache clang.cache --enable-cassert --enable-dtrace
+          CONF: ${{env.MESON_COMMON_FEATURES}} -Dcassert=true -Ddtrace=enabled
           CC: ccache clang
           CXX: ccache clang++
+          CLANG: ccache clang
         run: *compiler_warnings_cmd
 
       - name: mingw warnings (cross compilation)
         if: ${{ !cancelled() }}
         env:
-          CONF: --host=x86_64-w64-mingw32ucrt --enable-cassert --without-icu
-          CC: ccache x86_64-w64-mingw32ucrt-gcc
-          CXX: ccache x86_64-w64-mingw32ucrt-g++
+          CONF: >-
+            --cross-file src/tools/ci/meson-cross-w64-ucrt.txt
+            --buildtype debug
+            -Db_pch=true
+            -Dcassert=true
         run: *compiler_warnings_cmd
 
       ###
@@ -1240,12 +1355,8 @@ jobs:
       # XXX: Only do this if there have been changes in doc/ since last build
       - name: Build documentation
         if: ${{ !cancelled() }}
-        env:
-          CONF: --cache gcc.cache
-          CC: ccache gcc
-          CXX: ccache g++
-          DEFAULT_BUILD: -C doc
-        run: *compiler_warnings_cmd
+        run:
+          ninja -C build-meson docs
 
       ###
       # Verify headerscheck / cpluspluscheck succeed
@@ -1260,13 +1371,12 @@ jobs:
           echo "::group::configure"
           ./configure \
             ${{env.LINUX_CONFIGURE_FEATURES}} \
-            --cache gcc.cache \
             --quiet \
             CC="ccache gcc" CXX="ccache g++" CLANG="ccache clang"
           echo "::endgroup::"
 
-          make -s -j${{env.BUILD_JOBS}} clean
-          make -s -j${{env.BUILD_JOBS}} -k ${{env.CHECKFLAGS}} \
+          make -s -j$(nproc) clean
+          make -s -j$(nproc) -k ${{env.CHECKFLAGS}} \
             headerscheck cpluspluscheck \
             EXTRAFLAGS='-fmax-errors=10'
 
